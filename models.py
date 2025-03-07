@@ -1,9 +1,19 @@
-##Description: This script contains functions to load the pre-trained models from the PyTorch model zoo.
+##Description: This script contains functions to load the pre-trained models from the PyTorch model zoo and Hugging Face.
 # import necessary libraries
 import torch
+from transformers import OneFormerForUniversalSegmentation, OneFormerImageProcessor
 
 # check if GPU is available
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+def oneformer_model():
+    '''
+    Function to load the OneFormer model from Hugging Face
+    '''
+    model = OneFormerForUniversalSegmentation.from_pretrained("facebook/oneformer_cityscapes_swin_large").to(device).eval()
+    processor = OneFormerImageProcessor.from_pretrained("facebook/oneformer_cityscapes_swin_large")
+    
+    return model, processor
 
 
 

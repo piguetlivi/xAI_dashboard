@@ -7,6 +7,29 @@ import torch.optim as optim
 import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image
+from models import oneformer_model
+
+def predict_oneformer(image_path):
+    """
+    Function to predict the output of the image using the OneFormer model.
+    """
+    # Load model and processor
+    model, processor = oneformer_model()
+
+    # Load the image
+    input_image = Image.open(image_path).convert("RGB")
+
+    # Preprocess the image
+    inputs = processor(images=input_image, return_tensors="pt").to("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Perform segmentation
+    with torch.no_grad():
+        outputs = model(**inputs)
+
+    # Get segmentation map
+    segmentation_map = outputs.logits.argmax(dim=1).cpu().numpy()
+
+    return input_image, segmentation_map
 
 def predict_fcn_resnet101(image_path):
 

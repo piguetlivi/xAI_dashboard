@@ -1,13 +1,14 @@
 import dash_bootstrap_components as dbc
 
-def items_models_top_bar():
+def items_models_top_bar(): # top menu selection
     return [
         dbc.DropdownMenuItem('FCN ResNet50', id='fcn-resnet50_t'),
         dbc.DropdownMenuItem('SegNet', id='SegNet_t'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_t'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_t'),
         dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_t'),
-        dbc.DropdownMenuItem('LR-ASPP MobileNetV3-Large', id='lr-aspp-mobilenetv3-large_t')
+        dbc.DropdownMenuItem('LR-ASPP MobileNetV3-Large', id='lr-aspp-mobilenetv3-large_t'),
+        dbc.DropdownMenuItem('OneFormer', id='oneformer_t')
         ]
 
 
@@ -22,22 +23,24 @@ def items_models_card ():
         ]
 
 
-def items_models_filter_section1():
+def items_models_filter_section1(): # right filter selection
     return [
         dbc.DropdownMenuItem('FCN ResNet50', id='fcn-resnet50_f1'),
         dbc.DropdownMenuItem('FCN ResNet101', id='fcn-resnet101_f1'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_f1'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_f1'),
-        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_f1')
+        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_f1'),
+        dbc.DropdownMenuItem('OneFormer', id='oneformer_f1')
         ]
 
-def items_models_filter_section2():
+def items_models_filter_section2(): # left filter selection
     return [
         dbc.DropdownMenuItem('FCN ResNet50', id='fcn-resnet50_f2'),
         dbc.DropdownMenuItem('FCN ResNet101', id='fcn-resnet101_f2'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_f2'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_f2'),
-        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_f2')
+        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_f2'),
+        dbc.DropdownMenuItem('OneFormer', id='oneformer_f2')
         ]
 
 def items_windows():

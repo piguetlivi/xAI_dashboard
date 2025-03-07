@@ -3,7 +3,7 @@ import dash
 from dash import html, dcc, Input, Output
 import dash_bootstrap_components as dbc
 import items
-from predict_models import predict_fcn_resnet101, predict_fcn_resnet50, predict_deeplabv3_resnet50, predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large
+from predict_models import predict_fcn_resnet101, predict_fcn_resnet50, predict_deeplabv3_resnet50, predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_oneformer
 import torch
 import numpy as np
 import base64
@@ -304,10 +304,11 @@ def show_result_window_div(n_clicks_1, contents_1, contents_2, n_clicks_demo):
     Input('deeplabv3-resnet50_f1', 'n_clicks'),
     Input('deeplabv3-resnet101_f1', 'n_clicks'),
     Input('deeplabv3-mobilenetv3-large_f1', 'n_clicks'),
+    Input('oneformer_f1', 'n_clicks'),
     allow_duplicate = True
 )
 
-def image_segmentation_filter_left(n_clicks_1,  n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5):
+def image_segmentation_filter_left(n_clicks_1,  n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5, n_clicks_6):
     '''
     Function to display the image segmentation results on the left side depending on the model that is selected in the filter section.
     '''
@@ -416,6 +417,16 @@ def image_segmentation_filter_left(n_clicks_1,  n_clicks_2, n_clicks_3, n_clicks
                 
             return children
     
+    elif 'oneformer_f1' in change_id:
+        input_image, output_predictions = predict_oneformer('assets/images/demo_picture.png')
+
+        # Convert the segmentation map to an image
+        segmented_image = Image.fromarray(output_predictions[0])  
+
+        return html.Img(src=segmented_image, alt='Segmented Image')
+
+    return None
+    
 
 # Callback to display the image segmentation results on the right side
 @app.callback(
@@ -425,11 +436,12 @@ def image_segmentation_filter_left(n_clicks_1,  n_clicks_2, n_clicks_3, n_clicks
     Input('deeplabv3-resnet50_f2', 'n_clicks'),
     Input('deeplabv3-resnet101_f2', 'n_clicks'),
     Input('deeplabv3-mobilenetv3-large_f2', 'n_clicks'),
+    Input('oneformer_f2', 'n_clicks'),
     allow_duplicate = True
 )
 
-def image_segmentation_filter_right(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5):
-
+def image_segmentation_filter_right(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5, n_clicks_6):
+    
     # Get the id of the dropdown menu that is clicked
     change_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
 
@@ -530,6 +542,14 @@ def image_segmentation_filter_right(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks
 
         return children
     
+    elif 'oneformer_f2' in change_id:
+        input_image, output_predictions = predict_oneformer('assets/images/demo_picture.png')
+
+        # Convert the segmentation map to an image
+        segmented_image = Image.fromarray(output_predictions[0])  
+
+        return html.Img(src=segmented_image, alt='Segmented Image')
+    
                         
     
 # Callback to display the name model, that is chosen in the left filter section, in the title of the difference container
@@ -540,10 +560,11 @@ def image_segmentation_filter_right(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks
     Input('deeplabv3-resnet50_f1', 'n_clicks'),
     Input('deeplabv3-resnet101_f1', 'n_clicks'),
     Input('deeplabv3-mobilenetv3-large_f1', 'n_clicks'),
+    Input('oneformer_f1', 'n_clicks'),
     allow_duplicate = True
 )
 
-def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5):
+def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5, n_clicks_6):
 
     '''
     Function to display the name of the model that is selected in the filter section on the left side.
@@ -561,6 +582,8 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
         return 'DeepLabV3 ResNet101'
     elif 'deeplabv3-mobilenetv3-large_f1' in change_id:
         return 'DeepLabV3 MobileNetV3-Large'
+    elif 'oneformer_f1' in change_id:
+        return 'OneFormer'
     else:
         return None
     
@@ -572,6 +595,7 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
     Input('deeplabv3-resnet50_f2', 'n_clicks'),
     Input('deeplabv3-resnet101_f2', 'n_clicks'),
     Input('deeplabv3-mobilenetv3-large_f2', 'n_clicks'),
+    Input('oneformer_f2', 'n_clicks'),
     allow_duplicate = True
 )
 
@@ -593,6 +617,8 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
         return 'DeepLabV3 ResNet101'
     elif 'deeplabv3-mobilenetv3-large_f2' in change_id:
         return 'DeepLabV3 MobileNetV3-Large'
+    elif 'oneformer_f2' in change_id:
+        return 'OneFormer'
     else:
         return None
     
