@@ -2,7 +2,7 @@
 # Import necessary libraries
 from torchvision import transforms
 from PIL import Image
-from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime
+from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedBackprop, LayerGradCam
 from pytorch_grad_cam.utils.image import show_cam_on_image
 import cv2
 import numpy as np
@@ -295,6 +295,47 @@ def lime (model, label, input_tensor=input_tensor, normalized_inp=normalized_inp
     lime_on_image = lime_on_image()
 
     return lime_on_image
+
+def guided_grad_cam(model, label, input_tensor, normalized_inp):
+    """
+    Compute Guided Grad-CAM
+    Combines Grad-CAM heatmaps with Guided Backpropagation for fine-grained attributions.
+    """
+
+    def get_output(normalized_inp, model):
+        """
+        Get model output for the given input.
+        """
+        out = model(normalized_inp)['out']
+        return torch.argmax(out, dim=1, keepdim=True)
+
+    out_max = get_output(normalized_inp, model)
+
+    def segmentation_wrapper_grad(inp):
+        model_out = model(inp)['out']
+        selected_inds = torch.zeros_like(model_out[0:1]).scatter_(1, out_max, 1)
+        return (model_out * selected_inds).sum(dim=(2, 3))
+
+    # Compute Grad-CAM heatmap
+    layer_gc = LayerGradCam(segmentation_wrapper_grad, model.classifier)
+    gc_attr = layer_gc.attribute(normalized_inp, target=label)
+    gc_attr = (gc_attr - gc_attr.min()) / (gc_attr.max() - gc_attr.min())  # Normalize
+    heatmap = gc_attr.detach().cpu().numpy()[0, 0]
+    heatmap_resized = cv2.resize(heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
+
+    # Compute Guided Backpropagation
+    guided_bp = GuidedBackprop(model)
+    guided_attr = guided_bp.attribute(normalized_inp, target=label)
+    guided_attr = guided_attr.detach().cpu().numpy()[0].transpose(1, 2, 0)  # Convert to (H, W, C)
+    
+    # Element-wise multiplication of Guided Backprop and Grad-CAM heatmap
+    guided_grad_cam_output = guided_attr * heatmap_resized[..., np.newaxis]
+
+    # Normalize and overlay on input image
+    guided_grad_cam_output = (guided_grad_cam_output - guided_grad_cam_output.min()) / (guided_grad_cam_output.max() - guided_grad_cam_output.min())
+    guided_grad_cam_image = show_cam_on_image(input_tensor.cpu().numpy().transpose(1, 2, 0), guided_grad_cam_output, use_rgb=True)
+
+    return Image.fromarray(guided_grad_cam_image)
     
 
                 

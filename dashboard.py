@@ -599,7 +599,7 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
     allow_duplicate = True
 )
 
-def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5):
+def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5, n_clicks_6):
     
     '''
     Function to display the name of the model that is selected in the filter section on the right side.

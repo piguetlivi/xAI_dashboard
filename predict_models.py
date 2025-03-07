@@ -9,27 +9,23 @@ import numpy as np
 from PIL import Image
 from models import oneformer_model
 
-def predict_oneformer(image_path):
-    """
-    Function to predict the output of the image using the OneFormer model.
-    """
-    # Load model and processor
-    model, processor = oneformer_model()
-
-    # Load the image
+def predict_oneformer(image_path, task="semantic"):
     input_image = Image.open(image_path).convert("RGB")
 
-    # Preprocess the image
-    inputs = processor(images=input_image, return_tensors="pt").to("cuda" if torch.cuda.is_available() else "cpu")
+    # Load model and processor
+    model, processor = oneformer_model()
+    
+    # Ensure task_input is specified
+    inputs = processor(images=input_image, task_inputs=[task], return_tensors="pt")
+    
+    # Move to GPU if available
+    inputs = {k: v.to("cuda" if torch.cuda.is_available() else "cpu") for k, v in inputs.items()}
+    
+    # Run the model
+    outputs = model(**inputs)
 
-    # Perform segmentation
-    with torch.no_grad():
-        outputs = model(**inputs)
+    return outputs
 
-    # Get segmentation map
-    segmentation_map = outputs.logits.argmax(dim=1).cpu().numpy()
-
-    return input_image, segmentation_map
 
 def predict_fcn_resnet101(image_path):
 
