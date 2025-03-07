@@ -17,8 +17,9 @@ def items_models_card ():
         dbc.DropdownMenuItem('SegNet', id='SegNet_c'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_c'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_c'),
-        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_c'), #OneFormer aktuell nicht drin
-    ]
+        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_c'),
+        dbc.DropdownMenuItem('OneFormer', id='oneformer_c')
+        ]
 
 def items_models_filter_section1(): # right filter selection
     return [
