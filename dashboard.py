@@ -628,78 +628,120 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
 ## xAI
 
 # Callback to display the xAI methods results on the left and right side
-@app.callback(
+@app.callback( #Layer Grad CAM 
     Output('layer_grad_cam_1', 'children'),
     Output('layer_grad_cam_2', 'children'),
     Input('layer_grad_cam_f1', 'n_clicks'),
-    Input('fa_f1', 'n_clicks'),
-    Input('saliency_f1', 'n_clicks'),
-    Input('lime_f1', 'n_clicks'),
-    Input('guided_grad_cam_f1', 'n_clicks'),
+    Input('layer_grad_cam_f2', 'n_clicks'),
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
-    Input('layer_grad_cam_f2', 'n_clicks'),
-    Input('fa_f2', 'n_clicks'),
-    Input('saliency_f2', 'n_clicks'),
-    Input('lime_f2', 'n_clicks'),
-    Input('guided_grad_cam_f2', 'n_clicks'),
     Input('model_name_2', 'children'),
     Input('label_2', 'children')
 )
-def show_xAI_results(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5, model_name_1, label_name_1,
-                      n_clicks_6, n_clicks_7, n_clicks_8, n_clicks_9, n_clicks_10, model_name_2, label_name_2):
+def show_layer_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
+    return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.grad_cam)
+
+@app.callback( #Feature Ablation
+    Output('fa_1', 'children'),
+    Output('fa_2', 'children'),
+    Input('fa_f1', 'n_clicks'),
+    Input('fa_f2', 'n_clicks'),
+    Input('model_name_1', 'children'),
+    Input('label_1', 'children'),
+    Input('model_name_2', 'children'),
+    Input('label_2', 'children')
+)
+def show_feature_ablation(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
+    return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.feature_ablation)
+
+@app.callback( #Salience Maps
+    Output('saliency_1', 'children'),
+    Output('saliency_2', 'children'),
+    Input('saliency_f1', 'n_clicks'),
+    Input('saliency_f2', 'n_clicks'),
+    Input('model_name_1', 'children'),
+    Input('label_1', 'children'),
+    Input('model_name_2', 'children'),
+    Input('label_2', 'children')
+)
+def show_saliency(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
+    return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.saliency_maps)
+ 
+@app.callback( #LIME
+    Output('lime_1', 'children'),
+    Output('lime_2', 'children'),
+    Input('lime_f1', 'n_clicks'),
+    Input('lime_f2', 'n_clicks'),
+    Input('model_name_1', 'children'),
+    Input('label_1', 'children'),
+    Input('model_name_2', 'children'),
+    Input('label_2', 'children')
+)
+def show_lime(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
+    return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.lime)
+ 
+@app.callback( #Guided Grad CAM
+    Output('guided_grad_cam_1', 'children'),
+    Output('guided_grad_cam_2', 'children'),
+    Input('guided_grad_cam_f1', 'n_clicks'),
+    Input('guided_grad_cam_f2', 'n_clicks'),
+    Input('model_name_1', 'children'),
+    Input('label_1', 'children'),
+    Input('model_name_2', 'children'),
+    Input('label_2', 'children')
+)
+def show_guided_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
+    return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.guided_grad_cam)
+
+def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, method):
     """
-    Function to display the xAI method results on both left and right sides depending on the selected method, label, and model.
+    Generische Funktion für XAI-Methoden, um redundanten Code zu vermeiden.
     """
-    def get_xai_result(n_clicks_list, model_name, label_name):
-        if not any(n_clicks_list):
-            return None
+    if not n_clicks_1 and not n_clicks_2:
+        return None, None
 
-        model_mapping = {
-            'FCN ResNet50': models.fcn_resnet50(),
-            'FCN ResNet101': models.fcn_resnet101(),
-            'DeepLabV3 ResNet50': models.deeplabv3_resnet50(),
-            'DeepLabV3 ResNet101': models.deeplabv3_resnet101(),
-            'DeepLabV3 MobileNetV3-Large': models.deeplabv3_mobilenetv3_large(),
-            'OneFormer': models.oneformer_model()
-        }
-
-        label_mapping = {
-            'bicycle': 2,
-            'bus': 6,
-            'car': 7,
-            'motorbike': 14,
-            'person': 15,
-            'train': 19
-        }
-
-        method_mapping = {
-            'layer_grad_cam_f1': methods.grad_cam,
-            'fa_f1': methods.feature_ablation,
-            'saliency_f1': methods.saliency_maps,
-            'lime_f1': methods.lime,
-            'guided_grad_cam_f1': methods.guided_grad_cam,
-            'layer_grad_cam_f2': methods.grad_cam,
-            'fa_f2': methods.feature_ablation,
-            'saliency_f2': methods.saliency_maps,
-            'lime_f2': methods.lime,
-            'guided_grad_cam_f2': methods.guided_grad_cam
-        }
-
-        change_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
-        
-        if model_name in model_mapping and label_name in label_mapping and change_id in method_mapping:
-            model = model_mapping[model_name]
-            label = label_mapping[label_name]
-            method = method_mapping[change_id]
-            result_image = method(model, label)
-            return html.Img(src=result_image, alt='xAI Method Image')
-        
+    def get_result(n_clicks, model_name, label):
+        if n_clicks:
+            model = get_model(model_name)
+            label_id = get_label_id(label)
+            if model and label_id is not None:
+                result = method(model, label_id)
+                return html.Img(src=result, alt=f'{method.__name__} Result')
         return None
 
-    result_left = get_xai_result([n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clicks_5], model_name_1, label_name_1)
-    result_right = get_xai_result([n_clicks_6, n_clicks_7, n_clicks_8, n_clicks_9, n_clicks_10], model_name_2, label_name_2)
-    
+    result_1 = get_result(n_clicks_1, model_1, label_1)
+    result_2 = get_result(n_clicks_2, model_2, label_2)
+
+    return result_1, result_2
+
+def get_model(model_name):
+    """
+    Wandelt den Modellnamen in das passende Modell-Objekt um.
+    """
+    model_mapping = {
+        'FCN ResNet50': models.fcn_resnet50(),
+        'FCN ResNet101': models.fcn_resnet101(),
+        'DeepLabV3 ResNet50': models.deeplabv3_resnet50(),
+        'DeepLabV3 ResNet101': models.deeplabv3_resnet101(),
+        'OneFormer': models.oneformer_model()
+    }
+    return model_mapping.get(model_name, None)
+
+def get_label_id(label_name):
+    """
+    Wandelt den Label-Namen in die passende ID um.
+    """
+    label_mapping = {
+        'bicycle': 2,
+        'bus': 6,
+        'car': 7,
+        'motorbike': 14,
+        'person': 15,
+        'train': 19
+    }
+    return label_mapping.get(label_name, None)
+
+       
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## Show Difference
     
@@ -915,7 +957,7 @@ def calculate_xAI_difference(children_1, children_2):
     Input('fa_f1', 'n_clicks'),
     Input('saliency_f1', 'n_clicks'),
     Input('lime_f1', 'n_clicks'),
-    Input('layer_grad_cam_f1', 'n_clicks'),
+    Input('guided_grad_cam_f1', 'n_clicks'),
     allow_duplicate = True
 )
 
@@ -936,8 +978,8 @@ def show_method_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_cli
         return 'Saliency Maps'
     elif 'lime_f1' in change_id:
         return 'LIME'
-    elif 'layer_grad_cam_f1' in change_id:
-        return 'Layer Grad-CAM'
+    elif 'guided_grad_cam_f1' in change_id:
+        return 'Guided Grad-CAM'
 
     else:
         return None
@@ -950,7 +992,7 @@ def show_method_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_cli
     Input('fa_f2', 'n_clicks'),
     Input('saliency_f2', 'n_clicks'),
     Input('lime_f2', 'n_clicks'),
-    Input('layer_grad_cam_f2', 'n_clicks'),
+    Input('guided_grad_cam_f2', 'n_clicks'),
     allow_duplicate = True
 )
 
@@ -970,8 +1012,8 @@ def show_method_name_right (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_cl
         return 'Saliency Maps'
     elif 'lime_f2' in change_id:
         return 'LIME'
-    elif 'layer_grad_cam_f2' in change_id:
-        return 'Layer Grad-CAM'
+    elif 'guided_grad_cam_f2' in change_id:
+        return 'Guided Grad-CAM'
     else:
         return None
 

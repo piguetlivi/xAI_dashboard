@@ -299,7 +299,6 @@ def lime (model, label, input_tensor=input_tensor, normalized_inp=normalized_inp
 def guided_grad_cam(model, label, input_tensor, normalized_inp):
     """
     Compute Guided Grad-CAM
-    Combines Grad-CAM heatmaps with Guided Backpropagation for fine-grained attributions.
     """
 
     def get_output(normalized_inp, model):
@@ -317,7 +316,7 @@ def guided_grad_cam(model, label, input_tensor, normalized_inp):
         return (model_out * selected_inds).sum(dim=(2, 3))
 
     # Compute Grad-CAM heatmap
-    layer_gc = LayerGradCam(segmentation_wrapper_grad, model.classifier)
+    layer_gc = LayerGradCam(segmentation_wrapper_grad, model.model.decoder.layer[-1])
     gc_attr = layer_gc.attribute(normalized_inp, target=label)
     gc_attr = (gc_attr - gc_attr.min()) / (gc_attr.max() - gc_attr.min())  # Normalize
     heatmap = gc_attr.detach().cpu().numpy()[0, 0]
@@ -336,10 +335,3 @@ def guided_grad_cam(model, label, input_tensor, normalized_inp):
     guided_grad_cam_image = show_cam_on_image(input_tensor.cpu().numpy().transpose(1, 2, 0), guided_grad_cam_output, use_rgb=True)
 
     return Image.fromarray(guided_grad_cam_image)
-    
-
-                
-                
-
-
-

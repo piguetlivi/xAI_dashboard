@@ -7,7 +7,6 @@ def items_models_top_bar(): # top menu selection
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_t'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_t'),
         dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_t'),
-        dbc.DropdownMenuItem('LR-ASPP MobileNetV3-Large', id='lr-aspp-mobilenetv3-large_t'),
         dbc.DropdownMenuItem('OneFormer', id='oneformer_t')
         ]
 
@@ -18,10 +17,8 @@ def items_models_card ():
         dbc.DropdownMenuItem('SegNet', id='SegNet_c'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet50', id='deeplabv3-resnet50_c'),
         dbc.DropdownMenuItem('DeepLabV3 ResNet101', id='deeplabv3-resnet101_c'),
-        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_c'),
-        dbc.DropdownMenuItem('LR-ASPP MobileNetV3-Large', id='lr-aspp-mobilenetv3-large_c')
-        ]
-
+        dbc.DropdownMenuItem('DeepLabV3 MobileNetV3-Large', id='deeplabv3-mobilenetv3-large_c'), #OneFormer aktuell nicht drin
+    ]
 
 def items_models_filter_section1(): # right filter selection
     return [
@@ -54,7 +51,8 @@ def items_method_f1():
         dbc.DropdownMenuItem('LayerGradCam', id='layer_grad_cam_f1'),
         dbc.DropdownMenuItem('FeatureAblation', id='fa_f1'),
         dbc.DropdownMenuItem('Saliency Maps', id='saliency_f1'),
-        dbc.DropdownMenuItem('LIME', id='lime_f1')
+        dbc.DropdownMenuItem('LIME', id='lime_f1'),
+        dbc.DropdownMenuItem('Guided Grad-CAM', id='guided_grad_cam_f1')
         ]
 
 def items_method_f2():
@@ -62,7 +60,8 @@ def items_method_f2():
         dbc.DropdownMenuItem('LayerGradCam', id='layer_grad_cam_f2'),
         dbc.DropdownMenuItem('FeatureAblation', id='fa_f2'),
         dbc.DropdownMenuItem('Saliency Maps', id='saliency_f2'),
-        dbc.DropdownMenuItem('LIME', id='lime_f2')
+        dbc.DropdownMenuItem('LIME', id='lime_f2'),
+        dbc.DropdownMenuItem('Guided Grad-CAM', id='guided_grad_cam_f2')
         ]
 
 def items_labels_f1():
