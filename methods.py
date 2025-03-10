@@ -103,132 +103,62 @@ def grad_cam(model, label, input_tensor=input_tensor, normalized_inp=normalized_
     return gradcam_on_image
 
 
-def feature_ablation(model, label, input_tensor=input_tensor, normalized_inp=normalized_inp):
-    '''
-    Function to generate Feature Ablation visualizations
-    '''
+def feature_ablation(model, label, input_tensor, normalized_inp):
+    """
+    Generate Feature Ablation visualizations.
+    """
+    if model is None:
+        return None  # Avoid errors if no model is selected
+
+    model.eval()  # Set model to evaluation mode
+    normalized_inp.requires_grad = True  # Ensure input allows gradient computation
+
+    # Apply FeatureAblation directly to the model
+    fa = FeatureAblation(model)
+
+    # Compute feature ablation attributions
+    fa_attr = fa.attribute(normalized_inp, target=label, perturbations_per_eval=4)
+
+    # Normalize the attributions
+    fa_attr = (fa_attr - fa_attr.min()) / (fa_attr.max() - fa_attr.min())
+    fa_attr = fa_attr.detach().cpu().numpy()[0, 0]
+
+    # Resize and overlay heatmap
+    fa_heatmap_resized = cv2.resize(fa_attr, (input_tensor.shape[2], input_tensor.shape[1]))
+    ablation_img = show_cam_on_image(np.transpose(input_tensor.cpu().numpy(), (1,2,0)), fa_heatmap_resized, use_rgb=True)
+
+    return Image.fromarray(ablation_img)
+
+def saliency_maps(model, label, input_tensor, normalized_inp):
+    """
+    Generate Saliency Maps correctly using Captum.
+    """
+    # Ensure gradient tracking is enabled
+    normalized_inp.requires_grad = True
+
+    # Define Captum's Saliency object
+    saliency = Saliency(model)
+
+    # Compute Saliency attribution
+    saliency_attr = saliency.attribute(normalized_inp, target=label)
     
-    def outputs(normalized_inp, model):
-        '''
-        Function to get the output of the model.
-        '''
-                        
-        out = model(normalized_inp)['out']
-        out_max = torch.argmax(out, dim=1, keepdim=True)
+    # Normalize the saliency map
+    saliency_attr = saliency_attr.abs().detach().cpu().numpy()
+    saliency_attr = (saliency_attr - saliency_attr.min()) / (saliency_attr.max() - saliency_attr.min())
 
-        return  out_max
+    # Extract the heatmap
+    saliency_heatmap = saliency_attr[0, 0]
+    saliency_heatmap_resized = cv2.resize(saliency_heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
 
-    # Get the output maximum
-    out_max = outputs(normalized_inp, model)
+    # Overlay heatmap on the input image
+    saliency_img = show_cam_on_image(
+        np.transpose(input_tensor.detach().cpu().numpy(), (1, 2, 0)), 
+        saliency_heatmap_resized, 
+        use_rgb=True, 
+        image_weight=0.4
+    )
 
-
-    def agg_segmentation_wrapper_abl(inp):
-        '''
-        Function to aggregate the segmentation.
-        '''
-
-        model_out = model(inp)['out']
-        # Creates binary matrix with 1 for original argmax class for each pixel
-        # and 0 otherwise. Note that this may change when the input is ablated
-        # so we use the original argmax predicted above, out_max.
-        selected_inds = torch.zeros_like(model_out[0:1]).scatter_(1, out_max, 1)
-        return (model_out * selected_inds).sum(dim=(2,3))
-
-
-    def feature_ablation_on_image():
-        '''
-        Function to show feature ablation on the image, depending on the label.
-        '''
-        # Define the targets, depending on the number they got from PyTorch pretrained models.
-        targets = [2,6,7,14,15,19]
-
-        # Define the FeatureAblation object with the aggregation function.
-        fa = FeatureAblation(agg_segmentation_wrapper_abl)
-
-        for target in targets:
-            if target in [label]:
-
-                fa_attr = fa.attribute(normalized_inp, feature_mask=out_max, perturbations_per_eval=4, target=target)
-                fa_attr_norm = (fa_attr - fa_attr.min()) / (fa_attr.max() - fa_attr.min())
-                fa_attr_float = fa_attr_norm.detach().numpy().astype(np.float32)
-                fa_heatmap = fa_attr_float[0, 0] 
-                fa_heatmap_fin = cv2.resize(fa_heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
-
-                # input_tensor is the original image --> bring it to the right format
-                featureablation_img = show_cam_on_image(np.transpose(input_tensor.detach().cpu().numpy(), (1, 2, 0)), fa_heatmap_fin, use_rgb=True)
-
-                ablation_img = Image.fromarray(featureablation_img)
-
-                return ablation_img
-                                    
-    # Call the function
-    ablation_on_image = feature_ablation_on_image()
-
-    return ablation_on_image
-
-def saliency_maps(model, label, input_tensor=input_tensor, normalized_inp=normalized_inp):
-    '''
-    Function to generate Saliency Maps visualizations
-    '''
-    
-    def outputs(normalized_inp, model):
-        '''
-        Function to get the output of the model.
-        '''
-                        
-        out = model(normalized_inp)['out']
-        out_max = torch.argmax(out, dim=1, keepdim=True)
-
-        return  out_max
-
-    # Get the output maximum
-    out_max = outputs(normalized_inp, model)
-
-
-    def agg_segmentation_wrapper_sy(inp):
-        '''
-        Function to aggregate the segmentation.
-        '''
-        model_out = model(inp)['out']
-        # Creates binary matrix with 1 for original argmax class for each pixel
-        # and 0 otherwise. Note that this may change when the input is ablated
-        # so we use the original argmax predicted above, out_max.
-        selected_inds = torch.zeros_like(model_out[0:1]).scatter_(1, out_max, 1)
-        return (model_out * selected_inds).sum(dim=(2,3))
-    
-
-
-    def saliency_on_image ():
-        '''
-        Function to show saliency maps on the image, depending on the label.
-        '''
-        # Define the targets, depending on the number they got from PyTorch pretrained models.
-        targets = [2,6,7,14,15,19]
-
-        # Define the Saliency object with the aggregation function.
-        sy = Saliency(agg_segmentation_wrapper_sy)
-
-        for target in targets:
-            if target in [label]:
-
-                sy_attr = sy.attribute(normalized_inp, target=target)
-                sy_attr_norm = (sy_attr - sy_attr.min()) / (sy_attr.max() - sy_attr.min())
-                sy_attr_float = sy_attr_norm.detach().numpy().astype(np.float32)
-                sy_heatmap = sy_attr_float[0, 0] 
-                sy_heatmap_fin = cv2.resize(sy_heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
-
-                # input_tensor is the original image --> bring it to the right format
-                saliency_img = show_cam_on_image(np.transpose(input_tensor.detach().cpu().numpy(), (1, 2, 0)), sy_heatmap_fin, use_rgb=True, image_weight=0.4)
-
-                saliency_img = Image.fromarray(saliency_img)
-
-                
-                return saliency_img
-    
-    # Call the function
-    saliency_on_image = saliency_on_image()
-
-    return saliency_on_image
+    return Image.fromarray(saliency_img)
 
 
 def lime (model, label, input_tensor=input_tensor, normalized_inp=normalized_inp):

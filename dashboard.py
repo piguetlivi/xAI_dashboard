@@ -637,6 +637,7 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
 ## xAI
 
 # Callback to display the xAI methods results on the left and right side
+
 @app.callback( #Layer Grad CAM 
     Output('layer_grad_cam_1', 'children'),
     Output('layer_grad_cam_2', 'children'),
