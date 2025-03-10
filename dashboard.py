@@ -17,22 +17,46 @@ import platform
 # Initialize the Dash app with the Bootstrap theme for dash_bootstrap_components
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
+
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-
-# Explanation Textbox (Displayed at Start)
-explanation_text = html.Div([
-    html.H2("Welcome to the xAI Dashboard"),
-    html.P("This dashboard allows you to choose an image segmentation model and apply interpretability methods."
-           " Select a model to see how it segments an image, and compare different models to understand their behavior."),
-    html.P("Click 'Choose Model' to select a segmentation model and apply it to the default image.")
-], id="explanation_text")
-
 ## Layout
 
-# Layout without Top Bar
 app.layout = html.Div(children=[
-    explanation_text,
+        html.Div(children=[
+            # Top Bar
+            html.P('File'),
+            # Show Demo Dropdown Menu
+            dbc.DropdownMenu(label='Show Demo',
+                            children = [
+                                dbc.DropdownMenuItem('Show Demo', id='show_demo', n_clicks=0)
+                            ],
+                            direction='down',
+                            toggle_style={'color': 'black', 'background-color': 'grey', 'border': '0px solid black'},
+                            style={'margin': '5px'}
+            ),
+            # Add Window Dropdown Menu
+            dbc.DropdownMenu(label='Add Window',
+                            children = items.items_windows(),
+                            direction='down',
+                            toggle_style={'color': 'black', 'background-color': 'grey', 'border': '0px solid black'},
+                            style={'margin': '5px'}
+            ),
+            # Choose Model Dropdown Menu
+            dbc.DropdownMenu(label='Choose Model',
+                            children=items.items_models_top_bar(),
+                            direction='down',
+                            toggle_style={'color': 'black', 'background-color': 'grey', 'border': '0px solid black'},
+                            style={'margin': '5px'}
+            ),
+            # Import Image Dropdown Menu
+            dbc.DropdownMenu(label='Import Image', children=[
+                            # Import Image Section
+                            dbc.DropdownMenuItem(dcc.Upload(html.P('Import Image'), accept='.jpg, .png, .tiff', id='import_image_1'))],
+                            direction='down',
+                            toggle_style={'color': 'black', 'background-color': 'grey', 'border': '0px solid black'},
+                            style={'margin': '5px'})
+                
+        ], id='top-bar'),
         # Card Container
         html.Div([
             # This is the right card
@@ -46,7 +70,6 @@ app.layout = html.Div(children=[
                 html.Img(src='assets/images/image.png', alt='Image Pictogram', n_clicks=0)      
             ])
         ], id='card_container'),
-        
         # Row Container, where the user can choose the model and import the image
         html.Div([
             # Dropdown Container on the right below the card
@@ -196,7 +219,6 @@ app.layout = html.Div(children=[
             ])
         ],id='difference_container')
     ])
-
 
 #------------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## Demo, Upload and Results
@@ -394,15 +416,21 @@ def image_segmentation_filter_left(n_clicks_1,  n_clicks_2, n_clicks_3, n_clicks
             return children
     
     elif 'oneformer_f1' in change_id:
-        input_image, output_predictions = predict_oneformer('assets/images/demo_picture.png')
+        
+        # Load the prediction results from predict_models
+        outputs = predict_oneformer('assets/images/demo_picture.png')
 
-        # Convert the segmentation map to an image
-        segmented_image = Image.fromarray(output_predictions[0])  
+        # Extract the segmentation result
+        output_predictions = outputs.logits.argmax(dim=1).cpu().numpy()[0]
 
-        return html.Img(src=segmented_image, alt='Segmented Image')
+        # Convert the segmentation result to an image
+        segmented_image = Image.fromarray(output_predictions.astype("uint8"))
 
-    return None
-    
+        # Display the segmentation results
+        children = html.Img(src=segmented_image, alt="Segmented Image")
+
+        return children
+        
 
 # Callback to display the image segmentation results on the right side
 @app.callback(
@@ -519,12 +547,19 @@ def image_segmentation_filter_right(n_clicks_1, n_clicks_2, n_clicks_3, n_clicks
         return children
     
     elif 'oneformer_f2' in change_id:
-        input_image, output_predictions = predict_oneformer('assets/images/demo_picture.png')
+        # Load the prediction from predict_models
+        outputs = predict_oneformer('assets/images/demo_picture.png')
 
-        # Convert the segmentation map to an image
-        segmented_image = Image.fromarray(output_predictions[0])  
+        # Extract the segmentation result
+        output_predictions = outputs.logits.argmax(dim=1).cpu().numpy()[0]
 
-        return html.Img(src=segmented_image, alt='Segmented Image')
+        # Convert the segmentation result to an image
+        segmented_image = Image.fromarray(output_predictions.astype("uint8"))
+
+        # Display the segmentation results
+        children = html.Img(src=segmented_image, alt="Segmented Image")
+
+        return children
     
                         
     
@@ -669,7 +704,7 @@ def show_guided_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, labe
 
 def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, method):
     """
-    Generische Funktion für XAI-Methoden, um redundanten Code zu vermeiden.
+    Generic funcion to process the xAI results.
     """
     if not n_clicks_1 and not n_clicks_2:
         return None, None
@@ -690,7 +725,7 @@ def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label
 
 def get_model(model_name):
     """
-    Wandelt den Modellnamen in das passende Modell-Objekt um.
+    Change the model name to the model.
     """
     model_mapping = {
         'FCN ResNet50': models.fcn_resnet50(),
@@ -703,7 +738,7 @@ def get_model(model_name):
 
 def get_label_id(label_name):
     """
-    Wandelt den Label-Namen in die passende ID um.
+    Change the label name to the label
     """
     label_mapping = {
         'bicycle': 2,
