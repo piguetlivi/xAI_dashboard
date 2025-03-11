@@ -12,6 +12,7 @@ from PIL import Image
 import io
 import methods
 import models
+# from metrics import compute_quantus_metric
 import platform
 
 # Initialize the Dash app with the Bootstrap theme for dash_bootstrap_components
@@ -646,7 +647,8 @@ def show_model_name_left (n_clicks_1, n_clicks_2, n_clicks_3, n_clicks_4, n_clic
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
     Input('model_name_2', 'children'),
-    Input('label_2', 'children')
+    Input('label_2', 'children'),
+    Input('selected_metric', 'value'),
 )
 def show_layer_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.grad_cam)
@@ -659,7 +661,8 @@ def show_layer_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
     Input('model_name_2', 'children'),
-    Input('label_2', 'children')
+    Input('label_2', 'children'),
+    Input('selected_metric', 'value'),
 )
 def show_feature_ablation(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.feature_ablation)
@@ -672,7 +675,8 @@ def show_feature_ablation(n_clicks_1, n_clicks_2, model_1, label_1, model_2, lab
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
     Input('model_name_2', 'children'),
-    Input('label_2', 'children')
+    Input('label_2', 'children'),
+    Input('selected_metric', 'value'),
 )
 def show_saliency(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.saliency_maps)
@@ -685,7 +689,8 @@ def show_saliency(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
     Input('model_name_2', 'children'),
-    Input('label_2', 'children')
+    Input('label_2', 'children'),
+    Input('selected_metric', 'value'),
 )
 def show_lime(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.lime)
@@ -698,12 +703,13 @@ def show_lime(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     Input('model_name_1', 'children'),
     Input('label_1', 'children'),
     Input('model_name_2', 'children'),
-    Input('label_2', 'children')
+    Input('label_2', 'children'),
+    Input('selected_metric', 'value'),
 )
 def show_guided_grad_cam(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2):
     return process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, methods.guided_grad_cam)
 
-def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, method):
+def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label_2, method, metric):
     """
     Generic funcion to process the xAI results.
     """
@@ -716,7 +722,12 @@ def process_xai_results(n_clicks_1, n_clicks_2, model_1, label_1, model_2, label
             label_id = get_label_id(label)
             if model and label_id is not None:
                 result = method(model, label_id)
-                return html.Img(src=result, alt=f'{method.__name__} Result')
+                #metric_score = compute_quantus_metric(result, metric) # Compute the metric score
+                #img_src = convert_pil_to_base64(result)
+                return html.Div([
+                    html.Img(src=img_src, alt=f'{method.__name__} Result'),
+                    #html.P(f"{metric.__name__} Score: {metric_score:.4f}", style={"font-weight": "bold", "margin-top": "10px"})
+                ])
         return None
 
     result_1 = get_result(n_clicks_1, model_1, label_1)
@@ -736,6 +747,19 @@ def get_model(model_name):
         'OneFormer': models.oneformer_model()
     }
     return model_mapping.get(model_name, None)
+
+def get_metric(metric_name):
+    """
+    Map the selected metric name to the corresponding Quantus metric class.
+    """
+    metric_mapping = {
+        'IROF': metrics.irof_score,
+        'Max-Sensitivity': metrics.max_sensitivity_score,
+        'Focus': metrics.focus_score,
+        'Effective Complexity': metrics.effective_complexity_score
+    }
+    return metric_mapping.get(metric_name, None)
+
 
 def get_label_id(label_name):
     """
