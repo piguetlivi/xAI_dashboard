@@ -1,53 +1,95 @@
 import dash
-from dash import html, dcc, Input, Output, ctx
+from dash import html, dcc, Input, Output, State
 import dash_bootstrap_components as dbc
 import base64
 import io
-import torch
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
+import torch
+from methods import (
+    prepare_input,
+    grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam
+)
+from models import (
+    fcn_resnet50, fcn_resnet101,
+    deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large
+)
 from predict_models import (
-    predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50, 
+    predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
 from torchvision.models.segmentation import FCN_ResNet50_Weights
 
-
 # COCO-Labels
 COCO_LABELS = FCN_ResNet50_Weights.COCO_WITH_VOC_LABELS_V1.meta["categories"]
 
-# Cityscapes Label Mapping
-CITYSCAPES_LABELS = {
-    0: 'unlabeled', 1: 'road', 2: 'sidewalk', 3: 'building', 4: 'wall',
-    5: 'fence', 6: 'pole', 7: 'traffic light', 8: 'traffic sign', 9: 'vegetation',
-    10: 'terrain', 11: 'sky', 12: 'person', 13: 'rider', 14: 'car',
-    15: 'truck', 16: 'bus', 17: 'train', 18: 'motorcycle', 19: 'bicycle'
-}
+# Initialize Dash application with Bootstrap
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
-def get_cityscapes_label_options(segmentation_map):
-    unique_labels = np.unique(segmentation_map)
-    return [{'label': CITYSCAPES_LABELS[i], 'value': i} for i in unique_labels if i in CITYSCAPES_LABELS]
+# Define the layout of the dashboard
+app.layout = dbc.Container([
+    # Title Row
+    dbc.Row([
+        dbc.Col(html.H1("XAI Dashboard"), width=12)
+    ], className="mb-3"),
 
-# Dash App
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+    # Main Row for displaying images
+    dbc.Row([
+        # Original Image (Top Left) - Increased size
+        dbc.Col([
+            html.H4("Original Image"),
+            html.Div(id="output-image-upload", style={"border": "2px solid black", "padding": "10px", "height": "400px"})
+        ], width=4),
 
-app.layout = html.Div([
-    html.H1("Bild-Upload, Segmentierung & Dynamische Labels"),
-    dcc.Upload(id='upload-image', children=html.Button('Bild hochladen'), accept='.png, .jpg, .jpeg'),
-    dcc.Dropdown(id='model-dropdown', 
-                 options=[
-                     {'label': 'FCN ResNet50', 'value': 'fcn_resnet50'},
-                     {'label': 'FCN ResNet101', 'value': 'fcn_resnet101'},
-                     {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
-                     {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
-                     {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
-                     {'label': 'Mask2Former', 'value': 'mask2former'}
-                     ], placeholder="Modell auswählen"),
-    html.Div(id='output-image-upload'),
-    html.Div(id='output-segmentation'),
-    dcc.Dropdown(id='label-dropdown', options=[], placeholder="Segmentierte Klasse auswählen"),
-    dcc.Store(id='stored-segmentation-map'),
-])
+        # Segmented Image (Top Right) - Increased size
+        dbc.Col([
+            html.H4("Segmented Image"),
+            html.Div(id="output-segmentation", style={"border": "2px solid black", "padding": "10px", "height": "400px"})
+        ], width=4),
+
+        # Explanation/Metrics (Bottom Right) - Increased size
+        dbc.Col([
+            html.H4("Explanation & Metrics"),
+            html.Div(id="output-method", style={"border": "2px solid black", "padding": "10px", "height": "400px"})
+        ], width=4),
+    ]),
+
+    # Row for model, method, and metric selection
+    dbc.Row([
+        dbc.Col([
+            html.H4("Settings"),
+            dcc.Upload(id='upload-image', children=html.Button('Upload Image'), accept='.png, .jpg, .jpeg'),
+
+            # Model selection dropdown
+            dcc.Dropdown(id='model-dropdown', options=[
+                {'label': 'FCN ResNet50', 'value': 'fcn_resnet50'},
+                {'label': 'FCN ResNet101', 'value': 'fcn_resnet101'},
+                {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
+                {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
+                {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
+                {'label': 'Mask2Former', 'value': 'mask2former'}
+            ], placeholder="Select Model", className="mb-2"),
+
+            # Explanation method selection
+            dcc.Dropdown(id='method-dropdown', options=[
+                {'label': 'Grad-CAM', 'value': 'gradcam'},
+                {'label': 'Saliency Map', 'value': 'saliency'},
+                {'label': 'LIME', 'value': 'lime'},
+                {'label': 'Feature Ablation', 'value': 'ablation'},
+                {'label': 'Guided Grad-CAM', 'value': 'guided_gradcam'}
+            ], placeholder="Select Explanation Method", className="mb-2"),
+
+            # Label selection dropdown
+            dcc.Dropdown(id='label-dropdown', options=[], placeholder="Select Segmented Class", className="mb-2"),
+
+            # Store segmentation data
+            dcc.Store(id='stored-segmentation-map'),
+
+            # PDF Export Button
+            html.Button("Generate PDF", id="export-pdf", className="btn btn-primary"),
+        ], width=4),
+    ]),
+], fluid=True)
 
 @app.callback(
     [Output('output-image-upload', 'children'),
@@ -55,23 +97,20 @@ app.layout = html.Div([
      Output('label-dropdown', 'options'),
      Output('stored-segmentation-map', 'data')],
     [Input('upload-image', 'contents'),
-     Input('model-dropdown', 'value'),
-     Input('label-dropdown', 'value')]
+     Input('model-dropdown', 'value')],
+    prevent_initial_call=True
 )
-def process_and_highlight(contents, model_name, selected_label):
-    # Zugriff auf Kontext: nur Label gewählt → nur Highlight neu rendern
-    triggered_id = ctx.triggered_id
-
+def process_image(contents, model_name):
     if contents is None or model_name is None:
-        return html.P("Kein Bild oder Modell gewählt."), None, [], None
+        return html.P("No image or model selected."), None, [], None
 
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     image = Image.open(io.BytesIO(decoded)).convert("RGB")
-    
     image_path = "temp_image.jpg"
     image.save(image_path)
 
+    # Select model
     model_predictors = {
         'fcn_resnet50': predict_fcn_resnet50,
         'fcn_resnet101': predict_fcn_resnet101,
@@ -83,49 +122,41 @@ def process_and_highlight(contents, model_name, selected_label):
 
     predictor = model_predictors.get(model_name)
     if predictor is None:
-        return html.P("Ungültiges Modell."), None, [], None
+        return html.P("Invalid model selected."), None, [], None
 
+    # Run model & get segmentation output
     input_image, output_predictions = predictor(image_path)
     segmentation_map = np.array(output_predictions)
 
-    # Labels generieren
-    if model_name == 'mask2former':
-        label_options = get_cityscapes_label_options(segmentation_map)
-    else:
-        unique_labels = np.unique(segmentation_map)
-        label_options = [{'label': COCO_LABELS[l], 'value': l} for l in unique_labels if l < len(COCO_LABELS)]
+    # Convert segmentation output to an image
+    color_map = np.random.randint(0, 255, size=(256, 3), dtype=np.uint8)
+    segmented_image = color_map[segmentation_map]
+    segmented_pil = Image.fromarray(segmented_image.astype(np.uint8))
 
-    # Segmentierung erzeugen
-    if selected_label is not None:
-        # Highlight-Modus
-        highlight_color = np.array([255, 0, 0], dtype=np.uint8)
-        background_color = np.array([200, 200, 200], dtype=np.uint8)
-
-        h, w = segmentation_map.shape
-        highlighted_img = np.zeros((h, w, 3), dtype=np.uint8)
-        mask = segmentation_map == selected_label
-        highlighted_img[mask] = highlight_color
-        highlighted_img[~mask] = background_color
-        result_img = Image.fromarray(highlighted_img)
-
-    else:
-        # Normale farbige Segmentierung
-        color_map = np.random.randint(0, 255, size=(256, 3), dtype=np.uint8)
-        colored_img = color_map[segmentation_map]
-        result_img = Image.fromarray(colored_img.astype(np.uint8))
-
-    # In base64 umwandeln
     buffer = io.BytesIO()
-    result_img.save(buffer, format="PNG")
-    encoded = base64.b64encode(buffer.getvalue()).decode()
-    segment_display = html.Img(src=f'data:image/png;base64,{encoded}', style={'width': '50%', 'marginTop': '10px'})
+    segmented_pil.save(buffer, format="PNG")
+    encoded_segmented_img = base64.b64encode(buffer.getvalue()).decode()
     
     return (
-        html.Img(src=contents, style={'width': '50%', 'marginTop': '10px'}),
-        segment_display,
-        label_options,
-        segmentation_map.tolist()
+        html.Img(src=contents, style={'width': '100%', 'height': '100%'}),
+        html.Img(src=f'data:image/png;base64,{encoded_segmented_img}', style={'width': '100%', 'height': '100%'}),
+        [{'label': COCO_LABELS[l], 'value': l} for l in np.unique(segmentation_map) if l < len(COCO_LABELS)],
+        {'segmentation_map': segmentation_map.tolist()}
     )
+
+@app.callback(
+    Output('output-method', 'children'),
+    Input('method-dropdown', 'value'),
+    State('upload-image', 'contents'),
+    State('model-dropdown', 'value'),
+    prevent_initial_call=True
+)
+def run_xai(method, contents, model_name):
+    if not method or not contents or not model_name:
+        return dash.no_update
+
+    # XAI explanation logic goes here
+    return html.P(f"Applying {method}... (To be implemented)")
 
 if __name__ == '__main__':
     app.run_server(debug=True)
