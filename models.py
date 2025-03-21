@@ -2,15 +2,26 @@
 # import necessary libraries
 import torch
 from transformers import OneFormerForUniversalSegmentation, OneFormerProcessor
+from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
+
 
 # check if GPU is available
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+def mask2former_model():
+    ''' 
+    Function to load the Mask2Former model from Hugging Face
+    '''
+    processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-large-cityscapes")
+    model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-large-cityscapes")
+    model.eval()
+    return model, processor
 
 def oneformer_model():
     '''
     Function to load the OneFormer model from Hugging Face
     '''
-    processor = OneFormerProcessor.from_pretrained("shi-labs/oneformer_cityscapes_swin_large")
+    processor = OneFormerProcessor.from_pretrained("shi-labs/oneformer_cityscapes_swin_large", safe_kwargs=True)
     model = OneFormerForUniversalSegmentation.from_pretrained("shi-labs/oneformer_cityscapes_swin_large")
     
     return model, processor

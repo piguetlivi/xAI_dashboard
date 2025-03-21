@@ -9,3 +9,4 @@ grad-cam==1.5.0
 numpy==1.26.4
 transformers==4.36.1
 quantus==0.2.1
+matplotlib==3.10.1

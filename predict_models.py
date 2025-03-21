@@ -8,6 +8,26 @@ import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image
 from models import oneformer_model
+from models import mask2former_model
+
+def predict_mask2former(image_path, task="semantic"):
+    image = Image.open(image_path).convert("RGB")
+    model, processor = mask2former_model()
+    
+    inputs = processor(images=image, return_tensors="pt")
+    inputs = {k: v.to("cuda" if torch.cuda.is_available() else "cpu") for k, v in inputs.items()}
+    model = model.to("cuda" if torch.cuda.is_available() else "cpu")
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+
+    # Semantic segmentation map berechnen
+    result = processor.post_process_semantic_segmentation(
+        outputs, target_sizes=[(image.height, image.width)]
+    )[0]
+
+    return image, result.numpy()
+
 
 def predict_oneformer(image_path, task="semantic"):
     input_image = Image.open(image_path).convert("RGB")
