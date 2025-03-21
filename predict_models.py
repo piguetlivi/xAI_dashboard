@@ -9,24 +9,27 @@ import numpy as np
 from PIL import Image
 from models import mask2former_model
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
 def predict_mask2former(image_path, task="semantic"):
-    
-    image = Image.open(image_path).convert("RGB")
+    input_image = Image.open(image_path).convert("RGB")
+
+    # Load model and processor
     model, processor = mask2former_model()
 
-    inputs = processor(images=image, return_tensors="pt")
-    inputs = {k: v.to("cuda" if torch.cuda.is_available() else "cpu") for k, v in inputs.items()}
-    model = model.to("cuda" if torch.cuda.is_available() else "cpu")
+    inputs = processor(images=input_image, task_inputs=[task], return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
 
     with torch.no_grad():
         outputs = model(**inputs)
 
-    # Semantic Segmentation Postprocessing
-    result = processor.post_process_semantic_segmentation(
-        outputs, target_sizes=[(image.height, image.width)]
-    )[0]
+    # Use Hugging Face processor to get final semantic segmentation map
+    target_size = input_image.size[::-1]  # (height, width)
+    processed = processor.post_process_semantic_segmentation(outputs, target_sizes=[target_size])[0]  # single image
 
-    return image, result.numpy()
+    return input_image, processed
+
 
 def predict_fcn_resnet101(image_path):
 

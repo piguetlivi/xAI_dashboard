@@ -1,5 +1,3 @@
-# Refactored methods.py (no globals)
-
 from torchvision import transforms
 from PIL import Image
 from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedBackprop
@@ -10,8 +8,15 @@ import torch
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-# Common preprocessing helpers
+# -------------------------------------------
+# Common helpers
+# -------------------------------------------
+
 def prepare_input(image_path):
+    """
+    Loads and prepares an image for model input.
+    Returns both the raw input tensor and the normalized input for attribution methods.
+    """
     input_image = Image.open(image_path).convert("RGB")
     input_image = input_image.resize((input_image.width // 2, input_image.height // 2), resample=Image.LANCZOS)
 
@@ -24,39 +29,62 @@ def prepare_input(image_path):
 
     return input_tensor, normalized_inp
 
+def get_segmentation_output(model_output):
+    """
+    Extracts the semantic segmentation output from a model.
+    Handles both:
+    - torchvision models (output as dict with 'out')
+    - Hugging Face models (e.g., OneFormer, output as .sem_seg)
+    """
+    if hasattr(model_output, "sem_seg"):  # Hugging Face models
+        return model_output.sem_seg
+    elif isinstance(model_output, dict) and 'out' in model_output:  # torchvision models
+        return model_output['out']
+    else:
+        print("DEBUG: model_output type:", type(model_output))
+        print("DEBUG: model_output keys/attributes:", dir(model_output))
 
-# --- XAI Methods ---
+        raise ValueError("Unknown segmentation output format from model.")
+
+# -------------------------------------------
+# XAI Methods
+# -------------------------------------------
 
 def grad_cam(model, label, input_tensor, normalized_inp):
+    """
+    Grad-CAM explanation for semantic segmentation models.
+    """
+
     def outputs(normalized_inp, model):
-        out = model(normalized_inp)['out']
+        out = get_segmentation_output(model(normalized_inp))
         return torch.argmax(out, dim=1, keepdim=True)
 
     out_max = outputs(normalized_inp, model)
 
     def agg_wrapper(inp):
-        out = model(inp)['out']
+        out = get_segmentation_output(model(inp))
         selected_inds = torch.zeros_like(out[0:1]).scatter_(1, out_max, 1)
         return (out * selected_inds).sum(dim=(2, 3))
 
-    targets = [2, 6, 7, 14, 15, 19]
-    if label not in targets:
-        return None
-
+    # Apply Grad-CAM
     layer_gc = LayerGradCam(agg_wrapper, model.classifier)
     gc_attr = layer_gc.attribute(normalized_inp, target=label)
 
+    # Normalize and resize heatmap
     heatmap = (gc_attr - gc_attr.min()) / (gc_attr.max() - gc_attr.min())
     heatmap = heatmap.detach().cpu().numpy()[0, 0]
     heatmap = cv2.resize(heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
 
-    image_np = input_tensor.permute(1, 2, 0).detach().cpu().numpy()
-    result = show_cam_on_image(image_np, heatmap, use_rgb=True)
-
+    # Overlay on input image
+    result = show_cam_on_image(input_tensor.permute(1, 2, 0).cpu().numpy(), heatmap, use_rgb=True)
     return Image.fromarray(result)
 
 
 def feature_ablation(model, label, input_tensor, normalized_inp):
+    """
+    Feature Ablation explanation using Captum.
+    """
+
     fa = FeatureAblation(model)
     fa_attr = fa.attribute(normalized_inp, target=label, perturbations_per_eval=4)
 
@@ -69,6 +97,10 @@ def feature_ablation(model, label, input_tensor, normalized_inp):
 
 
 def saliency_maps(model, label, input_tensor, normalized_inp):
+    """
+    Saliency map visualization using raw gradients.
+    """
+
     saliency = Saliency(model)
     saliency_attr = saliency.attribute(normalized_inp, target=label)
 
@@ -82,21 +114,27 @@ def saliency_maps(model, label, input_tensor, normalized_inp):
 
 
 def lime(model, label, input_tensor, normalized_inp):
-    out = model(normalized_inp)['out']
+    """
+    Local Interpretable Model-Agnostic Explanation (LIME) for segmentation.
+    """
+
+    out = get_segmentation_output(model(normalized_inp))
     out_max = torch.argmax(out, dim=1, keepdim=True)
 
     def agg_wrapper(inp):
-        out = model(inp)['out']
+        out = get_segmentation_output(model(inp))
         selected_inds = torch.zeros_like(out[0:1]).scatter_(1, out_max, 1)
         return (out * selected_inds).sum(dim=(2, 3))
 
-    targets = [2, 6, 7, 14, 15, 19]
-    if label not in targets:
-        return None
-
     lime_explainer = Lime(agg_wrapper)
     baselines = torch.zeros_like(normalized_inp)
-    lime_attr = lime_explainer.attribute(normalized_inp, target=label, feature_mask=out_max, baselines=baselines, n_samples=20)
+    lime_attr = lime_explainer.attribute(
+        normalized_inp,
+        target=label,
+        feature_mask=out_max,
+        baselines=baselines,
+        n_samples=20
+    )
 
     lime_attr = (lime_attr - lime_attr.min()) / (lime_attr.max() - lime_attr.min())
     heatmap = lime_attr.detach().cpu().numpy()[0, 0]
@@ -107,29 +145,34 @@ def lime(model, label, input_tensor, normalized_inp):
 
 
 def guided_grad_cam(model, label, input_tensor, normalized_inp):
-    out = model(normalized_inp)['out']
+    """
+    Guided Grad-CAM explanation: combines Guided Backpropagation and Grad-CAM.
+    """
+
+    out = get_segmentation_output(model(normalized_inp))
     out_max = torch.argmax(out, dim=1, keepdim=True)
 
     def wrapper(inp):
-        out = model(inp)['out']
+        out = get_segmentation_output(model(inp))
         selected_inds = torch.zeros_like(out[0:1]).scatter_(1, out_max, 1)
         return (out * selected_inds).sum(dim=(2, 3))
 
-    # Grad-CAM
+    # Grad-CAM part
     layer_gc = LayerGradCam(wrapper, model.classifier)
     gc_attr = layer_gc.attribute(normalized_inp, target=label)
     gc_attr = (gc_attr - gc_attr.min()) / (gc_attr.max() - gc_attr.min())
     heatmap = gc_attr.detach().cpu().numpy()[0, 0]
     heatmap = cv2.resize(heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
 
-    # Guided Backprop
+    # Guided Backpropagation part
     gbp = GuidedBackprop(model)
     guided_attr = gbp.attribute(normalized_inp, target=label)
     guided_attr = guided_attr.detach().cpu().numpy()[0].transpose(1, 2, 0)
 
-    # Combine
+    # Combine both
     guided_gradcam = guided_attr * heatmap[..., np.newaxis]
     guided_gradcam = (guided_gradcam - guided_gradcam.min()) / (guided_gradcam.max() - guided_gradcam.min())
 
     result = show_cam_on_image(input_tensor.permute(1, 2, 0).cpu().numpy(), guided_gradcam, use_rgb=True)
     return Image.fromarray(result)
+

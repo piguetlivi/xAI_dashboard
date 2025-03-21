@@ -4,7 +4,7 @@ import dash_bootstrap_components as dbc
 import base64
 import io
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 import torch
 from methods import (
     prepare_input,
@@ -12,16 +12,14 @@ from methods import (
 )
 from models import (
     fcn_resnet50, fcn_resnet101,
-    deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large
+    deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large, mask2former_model
 )
 from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
 from torchvision.models.segmentation import FCN_ResNet50_Weights
-
-# COCO-Labels
-COCO_LABELS = FCN_ResNet50_Weights.COCO_WITH_VOC_LABELS_V1.meta["categories"]
+from labels import COCO_LABELS, CITYSCAPES_LABELS
 
 # Initialize Dash application with Bootstrap
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
@@ -82,6 +80,7 @@ app.layout = dbc.Container([
             # Label selection dropdown
             dcc.Dropdown(id='label-dropdown', options=[], placeholder="Select Segmented Class", className="mb-2"),
 
+
             # Store segmentation data
             dcc.Store(id='stored-segmentation-map'),
 
@@ -100,6 +99,7 @@ app.layout = dbc.Container([
      Input('model-dropdown', 'value')],
     prevent_initial_call=True
 )
+
 def process_image(contents, model_name):
     if contents is None or model_name is None:
         return html.P("No image or model selected."), None, [], None
@@ -136,6 +136,18 @@ def process_image(contents, model_name):
     buffer = io.BytesIO()
     segmented_pil.save(buffer, format="PNG")
     encoded_segmented_img = base64.b64encode(buffer.getvalue()).decode()
+
+    if model_name == 'mask2former':
+        label_options = [{'label': CITYSCAPES_LABELS[l], 'value': l}
+                         for l in np.unique(segmentation_map)
+                         if l < len(CITYSCAPES_LABELS)]
+    else:
+        label_options = [{'label': COCO_LABELS[l], 'value': l}
+                         for l in np.unique(segmentation_map)
+                         if l < len(COCO_LABELS)]
+        
+    print("DEBUG: Unique labels in segmentation:", np.unique(segmentation_map))
+    print("DEBUG: label_options:", label_options)
     
     return (
         html.Img(src=contents, style={'width': '100%', 'height': '100%'}),
@@ -146,17 +158,89 @@ def process_image(contents, model_name):
 
 @app.callback(
     Output('output-method', 'children'),
-    Input('method-dropdown', 'value'),
-    State('upload-image', 'contents'),
-    State('model-dropdown', 'value'),
+    [Input('method-dropdown', 'value'),
+     Input('label-dropdown', 'value')],
+    [State('upload-image', 'contents'),
+     State('model-dropdown', 'value')],
     prevent_initial_call=True
 )
-def run_xai(method, contents, model_name):
-    if not method or not contents or not model_name:
-        return dash.no_update
+def run_xai(method, label_id, contents, model_name):
+    print("DEBUG: method:", method)
+    print("DEBUG: contents is None?", contents is None)
+    print("DEBUG: model_name:", model_name)
+    print("DEBUG: label_id:", label_id)
 
-    # XAI explanation logic goes here
-    return html.P(f"Applying {method}... (To be implemented)")
+    if not method or not contents or not model_name or label_id is None:
+        return html.P("Please select an XAI method, upload an image, choose a model, and select a label.")
+
+    # Load image from uploaded contents
+    content_type, content_string = contents.split(',')
+    decoded = base64.b64decode(content_string)
+    image = Image.open(io.BytesIO(decoded)).convert("RGB")
+
+    image_path = "temp_image.jpg"
+    image.save(image_path)
+
+    # Load the correct model
+    model_loader = {
+        'fcn_resnet50': fcn_resnet50,
+        'fcn_resnet101': fcn_resnet101,
+        'deeplabv3_resnet50': deeplabv3_resnet50,
+        'deeplabv3_resnet101': deeplabv3_resnet101,
+        'deeplabv3_mobilenetv3_large': deeplabv3_mobilenetv3_large,
+        'mask2former': mask2former_model
+    }
+
+    if model_name not in model_loader:
+        print("DEBUG: Invalid model selected")
+        return html.P("Invalid model selected.")
+
+    if model_name == 'mask2former':
+        model, _ = model_loader[model_name]()  # ignore processor 
+    else:
+        model = model_loader[model_name]()
+
+    model = model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
+
+    # Prepare input for the model
+    input_tensor, normalized_inp = prepare_input(image_path)
+    print("DEBUG: input_tensor shape:", input_tensor.shape)
+
+    # Apply selected XAI method
+    xai_methods = {
+        "gradcam": grad_cam,
+        "saliency": saliency_maps,
+        "lime": lime,
+        "ablation": feature_ablation,
+        "guided_gradcam": guided_grad_cam
+    }
+
+    if method not in xai_methods:
+        print("DEBUG: Invalid XAI method selected")
+        return html.P("Invalid XAI method selected.")
+
+    # Run the explanation
+    explanation = xai_methods[method](model, label_id, input_tensor, normalized_inp)
+
+    if explanation is None:
+        print("DEBUG: Explanation is None")
+        return html.P("Explanation could not be generated for this method.")
+
+    # Convert explanation to image
+    buffer = io.BytesIO()
+    explanation.save(buffer, format="PNG")
+    encoded_xai_img = base64.b64encode(buffer.getvalue()).decode()
+
+    print("DEBUG: Successfully generated explanation image")
+
+    print("DEBUG: method:", method)
+    print("DEBUG: model_name:", model_name)
+    print("DEBUG: label_id:", label_id)
+
+    
+    return html.Img(src=f'data:image/png;base64,{encoded_xai_img}', style={'width': '100%', 'height': '100%'})
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)
+
