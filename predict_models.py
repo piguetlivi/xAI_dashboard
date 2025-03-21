@@ -7,14 +7,10 @@ import torch.optim as optim
 import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image
-from models import oneformer_model
 from models import mask2former_model
 
 def predict_mask2former(image_path, task="semantic"):
-    from PIL import Image
-    import torch
-    import numpy as np
-
+    
     image = Image.open(image_path).convert("RGB")
     model, processor = mask2former_model()
 
@@ -31,25 +27,6 @@ def predict_mask2former(image_path, task="semantic"):
     )[0]
 
     return image, result.numpy()
-
-
-def predict_oneformer(image_path, task="semantic"):
-    input_image = Image.open(image_path).convert("RGB")
-
-    # Load model and processor
-    model, processor = oneformer_model()
-    
-    # Ensure task_input is specified
-    inputs = processor(images=input_image, task_inputs=[task], return_tensors="pt")
-    
-    # Move to GPU if available
-    inputs = {k: v.to("cuda" if torch.cuda.is_available() else "cpu") for k, v in inputs.items()}
-    
-    # Run the model
-    outputs = model(**inputs)
-
-    return outputs
-
 
 def predict_fcn_resnet101(image_path):
 

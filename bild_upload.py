@@ -8,18 +8,13 @@ import numpy as np
 from PIL import Image
 from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50, 
-    predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, 
-    predict_oneformer, predict_mask2former
+    predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
 from torchvision.models.segmentation import FCN_ResNet50_Weights
-from transformers import OneFormerProcessor
+
 
 # COCO-Labels
 COCO_LABELS = FCN_ResNet50_Weights.COCO_WITH_VOC_LABELS_V1.meta["categories"]
-
-# OneFormer Labels
-oneformer_processor = OneFormerProcessor.from_pretrained("shi-labs/oneformer_cityscapes_swin_large")
-ONEFORMER_LABELS = list(oneformer_processor.tokenizer.vocab.keys())
 
 # Cityscapes Label Mapping
 CITYSCAPES_LABELS = {
@@ -46,9 +41,8 @@ app.layout = html.Div([
                      {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
                      {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
                      {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
-                     {'label': 'OneFormer', 'value': 'oneformer'},
                      {'label': 'Mask2Former', 'value': 'mask2former'}
-                 ], placeholder="Modell auswählen"),
+                     ], placeholder="Modell auswählen"),
     html.Div(id='output-image-upload'),
     html.Div(id='output-segmentation'),
     dcc.Dropdown(id='label-dropdown', options=[], placeholder="Segmentierte Klasse auswählen"),
@@ -84,7 +78,6 @@ def process_and_highlight(contents, model_name, selected_label):
         'deeplabv3_resnet50': predict_deeplabv3_resnet50,
         'deeplabv3_resnet101': predict_deeplabv3_resnet101,
         'deeplabv3_mobilenetv3_large': predict_deeplabv3_mobilenetv3_large,
-        'oneformer': predict_oneformer,
         'mask2former': predict_mask2former
     }
 
@@ -96,10 +89,7 @@ def process_and_highlight(contents, model_name, selected_label):
     segmentation_map = np.array(output_predictions)
 
     # Labels generieren
-    if model_name == 'oneformer':
-        unique_labels = np.unique(segmentation_map)
-        label_options = [{'label': ONEFORMER_LABELS[l], 'value': l} for l in unique_labels if l < len(ONEFORMER_LABELS)]
-    elif model_name == 'mask2former':
+    if model_name == 'mask2former':
         label_options = get_cityscapes_label_options(segmentation_map)
     else:
         unique_labels = np.unique(segmentation_map)

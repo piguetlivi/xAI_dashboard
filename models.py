@@ -1,7 +1,6 @@
 ##Description: This script contains functions to load the pre-trained models from the PyTorch model zoo and Hugging Face.
 # import necessary libraries
 import torch
-from transformers import OneFormerForUniversalSegmentation, OneFormerProcessor
 from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 
@@ -16,16 +15,6 @@ def mask2former_model():
     model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-small-cityscapes-semantic")
     model.eval()
     return model, processor
-
-def oneformer_model():
-    '''
-    Function to load the OneFormer model from Hugging Face
-    '''
-    processor = OneFormerProcessor.from_pretrained("shi-labs/oneformer_cityscapes_swin_large", safe_kwargs=True)
-    model = OneFormerForUniversalSegmentation.from_pretrained("shi-labs/oneformer_cityscapes_swin_large")
-    
-    return model, processor
-
 
 
 def fcn_resnet50():
