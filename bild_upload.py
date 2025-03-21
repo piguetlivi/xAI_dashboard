@@ -1,5 +1,5 @@
 import dash
-from dash import html, dcc, Input, Output
+from dash import html, dcc, Input, Output, ctx
 import dash_bootstrap_components as dbc
 import base64
 import io
@@ -52,19 +52,25 @@ app.layout = html.Div([
     html.Div(id='output-image-upload'),
     html.Div(id='output-segmentation'),
     dcc.Dropdown(id='label-dropdown', options=[], placeholder="Segmentierte Klasse auswählen"),
+    dcc.Store(id='stored-segmentation-map'),
 ])
 
 @app.callback(
     [Output('output-image-upload', 'children'),
      Output('output-segmentation', 'children'),
-     Output('label-dropdown', 'options')],
+     Output('label-dropdown', 'options'),
+     Output('stored-segmentation-map', 'data')],
     [Input('upload-image', 'contents'),
-     Input('model-dropdown', 'value')]
+     Input('model-dropdown', 'value'),
+     Input('label-dropdown', 'value')]
 )
-def process_uploaded_image(contents, model_name):
+def process_and_highlight(contents, model_name, selected_label):
+    # Zugriff auf Kontext: nur Label gewählt → nur Highlight neu rendern
+    triggered_id = ctx.triggered_id
+
     if contents is None or model_name is None:
-        return html.P("Kein Bild hochgeladen oder Modell nicht gewählt."), None, []
-    
+        return html.P("Kein Bild oder Modell gewählt."), None, [], None
+
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     image = Image.open(io.BytesIO(decoded)).convert("RGB")
@@ -84,43 +90,52 @@ def process_uploaded_image(contents, model_name):
 
     predictor = model_predictors.get(model_name)
     if predictor is None:
-        return html.P("Ungültiges Modell."), None, []
+        return html.P("Ungültiges Modell."), None, [], None
 
     input_image, output_predictions = predictor(image_path)
-    
+    segmentation_map = np.array(output_predictions)
+
+    # Labels generieren
     if model_name == 'oneformer':
-        unique_labels = np.unique(output_predictions)
-        label_options = [{'label': ONEFORMER_LABELS[label], 'value': label} for label in unique_labels if label < len(ONEFORMER_LABELS)]
+        unique_labels = np.unique(segmentation_map)
+        label_options = [{'label': ONEFORMER_LABELS[l], 'value': l} for l in unique_labels if l < len(ONEFORMER_LABELS)]
     elif model_name == 'mask2former':
-        label_options = get_cityscapes_label_options(output_predictions)
-        # Zufällige Farben
-        color_map = np.random.randint(0, 255, size=(256, 3), dtype=np.uint8)
-        segmentation_img = color_map[output_predictions]
-        segmentation_pil = Image.fromarray(segmentation_img.astype(np.uint8))
+        label_options = get_cityscapes_label_options(segmentation_map)
     else:
-        unique_labels = np.unique(output_predictions)
-        label_options = [{'label': COCO_LABELS[label], 'value': label} for label in unique_labels if label < len(COCO_LABELS)]
-        # Farben definieren
-        palette = np.array([
-            [0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
-            [0, 0, 128], [128, 0, 128], [0, 128, 128], [255, 255, 0],
-            [255, 165, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255],
-            [255, 255, 255], [128, 128, 128], [255, 20, 147], [255, 215, 0]
-        ], dtype=np.uint8)
-        segmented_image_color = np.zeros((output_predictions.shape[0], output_predictions.shape[1], 3), dtype=np.uint8)
-        for class_idx in unique_labels:
-            mask = output_predictions == class_idx
-            segmented_image_color[mask] = palette[class_idx % len(palette)]
-        segmentation_pil = Image.fromarray(segmented_image_color)
+        unique_labels = np.unique(segmentation_map)
+        label_options = [{'label': COCO_LABELS[l], 'value': l} for l in unique_labels if l < len(COCO_LABELS)]
 
-    # In base64 umwandeln für Webanzeige
-    buffered = io.BytesIO()
-    segmentation_pil.save(buffered, format="PNG")
-    segmented_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    segmented_img_element = html.Img(src=f'data:image/png;base64,{segmented_base64}', style={'width': '50%', 'marginTop': '10px'})
+    # Segmentierung erzeugen
+    if selected_label is not None:
+        # Highlight-Modus
+        highlight_color = np.array([255, 0, 0], dtype=np.uint8)
+        background_color = np.array([200, 200, 200], dtype=np.uint8)
+
+        h, w = segmentation_map.shape
+        highlighted_img = np.zeros((h, w, 3), dtype=np.uint8)
+        mask = segmentation_map == selected_label
+        highlighted_img[mask] = highlight_color
+        highlighted_img[~mask] = background_color
+        result_img = Image.fromarray(highlighted_img)
+
+    else:
+        # Normale farbige Segmentierung
+        color_map = np.random.randint(0, 255, size=(256, 3), dtype=np.uint8)
+        colored_img = color_map[segmentation_map]
+        result_img = Image.fromarray(colored_img.astype(np.uint8))
+
+    # In base64 umwandeln
+    buffer = io.BytesIO()
+    result_img.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+    segment_display = html.Img(src=f'data:image/png;base64,{encoded}', style={'width': '50%', 'marginTop': '10px'})
     
-    return html.Img(src=contents, style={'width': '50%', 'marginTop': '10px'}), segmented_img_element, label_options
+    return (
+        html.Img(src=contents, style={'width': '50%', 'marginTop': '10px'}),
+        segment_display,
+        label_options,
+        segmentation_map.tolist()
+    )
 
-# App starten
 if __name__ == '__main__':
     app.run_server(debug=True)

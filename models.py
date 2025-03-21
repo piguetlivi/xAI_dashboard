@@ -12,8 +12,8 @@ def mask2former_model():
     ''' 
     Function to load the Mask2Former model from Hugging Face
     '''
-    processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-large-cityscapes")
-    model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-large-cityscapes")
+    processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-small-cityscapes-semantic")
+    model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-small-cityscapes-semantic")
     model.eval()
     return model, processor
 
