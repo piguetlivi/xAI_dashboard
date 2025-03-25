@@ -228,10 +228,10 @@ def run_xai(method, label_id, contents, model_name):
         print("DEBUG: Explanation is None")
         return html.P("Explanation could not be generated for this method.")
 
-    # Convert explanation to image
+    # explanation is a PIL.Image
     buffer = io.BytesIO()
     explanation.save(buffer, format="PNG")
-    encoded_xai_img = base64.b64encode(buffer.getvalue()).decode()
+    encoded_explanation = base64.b64encode(buffer.getvalue()).decode()
 
     print("DEBUG: Successfully generated explanation image")
     print("DEBUG: method:", method)
@@ -239,7 +239,7 @@ def run_xai(method, label_id, contents, model_name):
     print("DEBUG: label_id:", label_id)
 
     
-    return html.Img(src=f'data:image/png;base64,{encoded_xai_img}', style={'width': '100%', 'height': '100%'})
+    return html.Img(src=f"data:image/png;base64,{encoded_explanation}", style={"width": "100%", "height": "100%"})
 
 
 if __name__ == '__main__':

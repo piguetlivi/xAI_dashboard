@@ -153,13 +153,10 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     cam_np = cam.detach().cpu().numpy()
     cam_resized = cv2.resize(cam_np, (input_np.shape[1], input_np.shape[0]))  # [W, H]
 
-    plt.imshow(cam_np, cmap='jet', alpha=0.5)
-    plt.title(f"Grad-CAM overlay for label {label}")
-    plt.colorbar(label="Grad-CAM Intensity")
-
-    # Save instead of showing
-    plt.savefig("gradcam_overlay.png", bbox_inches="tight")
-    plt.close()
+    # Convert CAM to RGB heatmap overlay
+    overlay = show_cam_on_image(input_np, cam_resized, use_rgb=True)
+    
+    return Image.fromarray(overlay)
 
 
 def grad_cam(model, label, input_tensor, normalized_inp):
