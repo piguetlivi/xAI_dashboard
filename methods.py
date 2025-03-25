@@ -1,11 +1,17 @@
 from torchvision import transforms
+import torch
+import torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")  # Use non-interactive backend for dashboard
+import matplotlib.pyplot as plt
+import torchvision.transforms.functional as TF
 from PIL import Image
 from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedBackprop
 from transformers import Mask2FormerImageProcessor
 from pytorch_grad_cam.utils.image import show_cam_on_image
-import cv2
 import numpy as np
-import torch
+import cv2
+from io import BytesIO
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -137,16 +143,23 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     # Compute class activation map
     cam = torch.relu((weights * activations).sum(dim=1)).squeeze()
     cam -= cam.min()
-    cam /= cam.max() + 1e-8
+    cam /= cam.max() + 1e-8  # Normalize to [0, 1]
+
+    # Convert original image to numpy (HWC) and scale to [0,1]
+    input_np = input_tensor.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]
+    input_np = (input_np - input_np.min()) / (input_np.max() - input_np.min())  # just in case
+
+    # Resize CAM to match original image size
     cam_np = cam.detach().cpu().numpy()
-    cam_resized = cv2.resize(cam_np, (input_tensor.shape[2], input_tensor.shape[1]))  # (W, H)
+    cam_resized = cv2.resize(cam_np, (input_np.shape[1], input_np.shape[0]))  # [W, H]
 
-    # Overlay heatmap on original image
-    input_np = input_tensor.cpu().numpy().transpose(1, 2, 0)
-    cam_image = show_cam_on_image(input_np, cam_resized, use_rgb=True)
+    plt.imshow(cam_np, cmap='jet', alpha=0.5)
+    plt.title(f"Grad-CAM overlay for label {label}")
+    plt.colorbar(label="Grad-CAM Intensity")
 
-    return Image.fromarray(cam_image)
-
+    # Save instead of showing
+    plt.savefig("gradcam_overlay.png", bbox_inches="tight")
+    plt.close()
 
 
 def grad_cam(model, label, input_tensor, normalized_inp):

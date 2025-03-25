@@ -234,7 +234,6 @@ def run_xai(method, label_id, contents, model_name):
     encoded_xai_img = base64.b64encode(buffer.getvalue()).decode()
 
     print("DEBUG: Successfully generated explanation image")
-
     print("DEBUG: method:", method)
     print("DEBUG: model_name:", model_name)
     print("DEBUG: label_id:", label_id)
