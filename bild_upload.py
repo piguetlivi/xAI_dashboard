@@ -8,7 +8,7 @@ from PIL import Image
 import torch
 from methods import (
     prepare_input,
-    grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam
+    grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam, seg_grad_cam
 )
 from models import (
     fcn_resnet50, fcn_resnet101,
@@ -74,7 +74,8 @@ app.layout = dbc.Container([
                 {'label': 'Saliency Map', 'value': 'saliency'},
                 {'label': 'LIME', 'value': 'lime'},
                 {'label': 'Feature Ablation', 'value': 'ablation'},
-                {'label': 'Guided Grad-CAM', 'value': 'guided_gradcam'}
+                {'label': 'Guided Grad-CAM', 'value': 'guided_gradcam'},
+                {'label': 'Segmentation Grad-CAM', 'value': 'seg_gradcam'}
             ], placeholder="Select Explanation Method", className="mb-2"),
 
             # Label selection dropdown
@@ -212,7 +213,8 @@ def run_xai(method, label_id, contents, model_name):
         "saliency": saliency_maps,
         "lime": lime,
         "ablation": feature_ablation,
-        "guided_gradcam": guided_grad_cam
+        "guided_gradcam": guided_grad_cam,
+        "seg_gradcam": seg_grad_cam
     }
 
     if method not in xai_methods:

@@ -1,6 +1,7 @@
 from torchvision import transforms
 from PIL import Image
 from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedBackprop
+from transformers import Mask2FormerImageProcessor
 from pytorch_grad_cam.utils.image import show_cam_on_image
 import cv2
 import numpy as np
@@ -49,6 +50,104 @@ def get_segmentation_output(model_output):
 # -------------------------------------------
 # XAI Methods
 # -------------------------------------------
+
+def seg_grad_cam(model, label, input_tensor, normalized_inp):
+    """
+    Seg-Grad-CAM for Hugging Face Mask2FormerForUniversalSegmentation.
+
+    Args:
+        model: Mask2Former model (from Hugging Face)
+        label: int – target class ID to explain
+        input_tensor: unnormalized image [3, H, W]
+        normalized_inp: normalized image tensor [1, 3, H, W]
+    
+    Returns:
+        PIL.Image with CAM overlay
+    """
+    
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
+    normalized_inp = normalized_inp.to(device)
+    normalized_inp.requires_grad = True  # allow backward pass through input
+
+    # Load the official processor to do semantic segmentation post-processing
+    processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-small-ade-semantic")
+
+    # Buffers to store hooked outputs
+    target_activations = []
+    target_gradients = []
+
+    # Hook: capture intermediate features and register gradient callback
+    def forward_hook(module, input, output):
+        output = output.requires_grad_()  # ensure gradients can flow
+        target_activations.append(output)
+
+        def backward_hook(grad):
+            target_gradients.append(grad)
+
+        output.register_hook(backward_hook)
+
+    # Register the hook to a deep Swin encoder block (we debugged that this exists)
+    for name, module in model.named_modules():
+        if name == "model.pixel_level_module.encoder.encoder.layers.2.blocks.11.output":
+            print(f"✔ Hooked into: {name}")
+            handle = module.register_forward_hook(forward_hook)
+            break
+
+    # First forward pass: get semantic segmentation output (no gradients)
+    with torch.no_grad():
+        outputs = model(normalized_inp)
+        target_size = (input_tensor.shape[1], input_tensor.shape[2])  # (H, W)
+        semseg = processor.post_process_semantic_segmentation(outputs, target_sizes=[target_size])[0]
+
+    # Generate binary mask for selected label
+    mask = (semseg == label).float()
+
+    # Resize the binary mask to match the spatial resolution of predicted masks
+    _, num_queries, Hm, Wm = outputs.masks_queries_logits.shape
+    mask_resized = torch.nn.functional.interpolate(
+        mask.unsqueeze(0).unsqueeze(0), size=(Hm, Wm), mode="nearest"
+    ).to(device)
+
+    # Second forward pass: this time with gradients
+    outputs = model(normalized_inp)
+    masks = outputs.masks_queries_logits  # shape: [1, num_queries, Hm, Wm]
+
+    # Get a scalar "score" by dotting class mask with predicted masks
+    score = (masks * mask_resized).sum()
+    model.zero_grad()
+    score.backward()  # this will trigger our hooks
+    handle.remove()
+
+    # Gradient-based weight calculation (SegGradCAM core)
+    gradients = target_gradients[0]  # could be 3D or 4D
+    activations = target_activations[0]
+
+    # Support different gradient shapes (your gradients were [1, C, L])
+    if gradients.ndim == 4:
+        weights = gradients.mean(dim=(2, 3), keepdim=True)
+    elif gradients.ndim == 3:
+        weights = gradients.mean(dim=2, keepdim=True).unsqueeze(-1)
+    elif gradients.ndim == 2:
+        weights = gradients.unsqueeze(-1).unsqueeze(-1)
+    else:
+        raise ValueError(f"Unexpected gradient shape: {gradients.shape}")
+
+    # Compute class activation map
+    cam = torch.relu((weights * activations).sum(dim=1)).squeeze()
+    cam -= cam.min()
+    cam /= cam.max() + 1e-8
+    cam_np = cam.detach().cpu().numpy()
+    cam_resized = cv2.resize(cam_np, (input_tensor.shape[2], input_tensor.shape[1]))  # (W, H)
+
+    # Overlay heatmap on original image
+    input_np = input_tensor.cpu().numpy().transpose(1, 2, 0)
+    cam_image = show_cam_on_image(input_np, cam_resized, use_rgb=True)
+
+    return Image.fromarray(cam_image)
+
+
 
 def grad_cam(model, label, input_tensor, normalized_inp):
     """
