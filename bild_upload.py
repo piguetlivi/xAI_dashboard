@@ -153,7 +153,7 @@ def process_image(contents, model_name):
     return (
         html.Img(src=contents, style={'width': '100%', 'height': '100%'}),
         html.Img(src=f'data:image/png;base64,{encoded_segmented_img}', style={'width': '100%', 'height': '100%'}),
-        label_options,  # Verwende die korrekt generierten label_options
+        label_options,  # Use the generated label options
         {'segmentation_map': segmentation_map.tolist()}
     )
 
@@ -165,6 +165,8 @@ def process_image(contents, model_name):
      State('model-dropdown', 'value')],
     prevent_initial_call=True
 )
+
+# Function to run the selected XAI method and display the result
 def run_xai(method, label_id, contents, model_name):
     print("DEBUG: method:", method)
     print("DEBUG: contents is None?", contents is None)
@@ -204,7 +206,7 @@ def run_xai(method, label_id, contents, model_name):
     model = model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # --- ADD THE HOOK SEARCH CODE HERE ---
+    # --- HOOK SEARCH CODE ---
     print("\n--- Searching for suitable hook locations ---")
     for name, module in model.named_modules():
         try:

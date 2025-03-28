@@ -1,3 +1,6 @@
+# This file contains the code to implement various explainable AI (XAI) methods for semantic segmentation models.
+
+# Import necessary libraries
 from torchvision import transforms
 import torch
 import torch.nn.functional as F
@@ -13,6 +16,7 @@ import numpy as np
 import cv2
 from io import BytesIO
 
+# Check if GPU is available
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 # -------------------------------------------

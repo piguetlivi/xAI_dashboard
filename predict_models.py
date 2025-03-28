@@ -1,5 +1,6 @@
-## This file contains the code to predict the output of the image using the pretrained models
-#importing the required libraries
+# This file contains the code to predict the output of the image using the pretrained models
+
+# Import required libraries
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,7 +13,13 @@ from models import mask2former_model
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+
 def predict_mask2former(image_path, task="semantic"):
+    
+    """
+    Function to predict the output of the image using the Mask2Former model.
+    """
+
     input_image = Image.open(image_path).convert("RGB")
 
     # Load model and processor

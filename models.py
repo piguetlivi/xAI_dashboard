@@ -1,10 +1,11 @@
-##Description: This script contains functions to load the pre-trained models from the PyTorch model zoo and Hugging Face.
-# import necessary libraries
+# Description: This script contains functions to load the pre-trained models from the PyTorch model zoo and Hugging Face.
+
+# Import necessary libraries
 import torch
 from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 
-# check if GPU is available
+# Check if GPU is available
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 def mask2former_model():
