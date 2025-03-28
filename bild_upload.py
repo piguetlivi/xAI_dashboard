@@ -146,14 +146,14 @@ def process_image(contents, model_name):
         label_options = [{'label': COCO_LABELS[l], 'value': l}
                          for l in np.unique(segmentation_map)
                          if l < len(COCO_LABELS)]
-        
+
     print("DEBUG: Unique labels in segmentation:", np.unique(segmentation_map))
     print("DEBUG: label_options:", label_options)
-    
+
     return (
         html.Img(src=contents, style={'width': '100%', 'height': '100%'}),
         html.Img(src=f'data:image/png;base64,{encoded_segmented_img}', style={'width': '100%', 'height': '100%'}),
-        [{'label': COCO_LABELS[l], 'value': l} for l in np.unique(segmentation_map) if l < len(COCO_LABELS)],
+        label_options,  # Verwende die korrekt generierten label_options
         {'segmentation_map': segmentation_map.tolist()}
     )
 
@@ -197,11 +197,35 @@ def run_xai(method, label_id, contents, model_name):
         return html.P("Invalid model selected.")
 
     if model_name == 'mask2former':
-        model, _ = model_loader[model_name]()  # ignore processor 
+        model, _ = model_loader[model_name]()  # ignore processor
     else:
         model = model_loader[model_name]()
 
     model = model.to("cuda" if torch.cuda.is_available() else "cpu").eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # --- ADD THE HOOK SEARCH CODE HERE ---
+    print("\n--- Searching for suitable hook locations ---")
+    for name, module in model.named_modules():
+        try:
+            # Create a dummy input
+            dummy_input = torch.randn(1, 3, 150, 200).to(device)  # Adjust input size as needed
+
+            # Try to pass the dummy input through the module
+            output = module(dummy_input)
+
+            # Check if the output is a tensor
+            if isinstance(output, torch.Tensor):
+                # Check if the output has at least 3 dimensions (B, C, H, W)
+                if len(output.shape) >= 3:
+                    print(f"Module Name: {name}, Output Shape: {output.shape}, Type: {type(module)}")
+        except Exception as e:
+            # Some modules might not accept the input directly or have other issues
+            # You can add more specific error handling here if needed
+            # print(f"Error with module {name}: {e}")
+            pass
+    print("--- Hook search complete ---\n")
+
 
     # Prepare input for the model
     input_tensor, normalized_inp = prepare_input(image_path)

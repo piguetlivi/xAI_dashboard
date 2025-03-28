@@ -96,7 +96,7 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
 
     # Register the hook to a deep Swin encoder block (we debugged that this exists)
     for name, module in model.named_modules():
-        if name == "model.pixel_level_module.encoder.encoder.layers.2.blocks.11.output":
+        if name == "model.pixel_level_module.encoder.embeddings.patch_embeddings.projection":
             print(f"✔ Hooked into: {name}")
             handle = module.register_forward_hook(forward_hook)
             break
@@ -116,9 +116,17 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
         mask.unsqueeze(0).unsqueeze(0), size=(Hm, Wm), mode="nearest"
     ).to(device)
 
+    # After mask resizing
+    print("Shape of mask_resized:", mask_resized.shape)
+    debug_mask = mask_resized.squeeze().detach().cpu().numpy()
+    plt.imshow(debug_mask, cmap="gray")
+    plt.title("Resized Class Mask")
+    plt.savefig("debug_mask.png")
+
     # Second forward pass: this time with gradients
     outputs = model(normalized_inp)
     masks = outputs.masks_queries_logits  # shape: [1, num_queries, Hm, Wm]
+    print("Shape of masks:", masks.shape)
 
     # Get a scalar "score" by dotting class mask with predicted masks
     score = (masks * mask_resized).sum()
@@ -130,6 +138,9 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     gradients = target_gradients[0]  # could be 3D or 4D
     activations = target_activations[0]
 
+    print("Shape of gradients:", gradients.shape)
+    print("Shape of activations:", activations.shape)
+
     # Support different gradient shapes (your gradients were [1, C, L])
     if gradients.ndim == 4:
         weights = gradients.mean(dim=(2, 3), keepdim=True)
@@ -140,10 +151,16 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     else:
         raise ValueError(f"Unexpected gradient shape: {gradients.shape}")
 
+    print("Shape of weights:", weights.shape)
+
     # Compute class activation map
     cam = torch.relu((weights * activations).sum(dim=1)).squeeze()
+    print("Shape of cam before normalization:", cam.shape)
+
     cam -= cam.min()
     cam /= cam.max() + 1e-8  # Normalize to [0, 1]
+
+    print("Shape of cam after normalization:", cam.shape)
 
     # Convert original image to numpy (HWC) and scale to [0,1]
     input_np = input_tensor.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]
@@ -155,7 +172,7 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
 
     # Convert CAM to RGB heatmap overlay
     overlay = show_cam_on_image(input_np, cam_resized, use_rgb=True)
-    
+
     return Image.fromarray(overlay)
 
 
