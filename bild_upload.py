@@ -1,3 +1,9 @@
+# This script is a Dash web application that allows users to upload an image, select a segmentation model, 
+# and apply various explainable AI (XAI) methods to visualize the model's predictions. 
+# The application uses pre-trained models from PyTorch and Hugging Face, and it provides options for 
+# generating explanations such as Seg Grad-CAM, saliency maps, LIME, and more.
+
+# Import necessary libraries
 import dash
 from dash import html, dcc, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -6,26 +12,40 @@ import io
 import numpy as np
 from PIL import Image
 import torch
-from methods import (
-    prepare_input,
-    grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam, seg_grad_cam
-)
+
+# Import the models
 from models import (
     fcn_resnet50, fcn_resnet101,
     deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large, mask2former_model
 )
+
+# Import the prediction functions
 from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
+
+# Import the methods)
+from methods import (
+    prepare_input,
+    grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam, seg_grad_cam
+)
+
+# Import the weights and labels for the models
 from torchvision.models.segmentation import FCN_ResNet50_Weights
 from labels import COCO_LABELS, CITYSCAPES_LABELS
+
+# Import the metrics
+from metrics import (
+    calculate_irof_quantus, calculate_max_sensitivity_quantus, 
+    calculate_focus_quantus, calculate_effective_complexity_quantus)
 
 # Initialize Dash application with Bootstrap
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # Define the layout of the dashboard
 app.layout = dbc.Container([
+
     # Title Row
     dbc.Row([
         dbc.Col(html.H1("XAI Dashboard"), width=12)
@@ -33,6 +53,7 @@ app.layout = dbc.Container([
 
     # Main Row for displaying images
     dbc.Row([
+
         # Original Image (Top Left) - Increased size
         dbc.Col([
             html.H4("Original Image"),
@@ -91,6 +112,7 @@ app.layout = dbc.Container([
     ]),
 ], fluid=True)
 
+# Callback to process the uploaded image and run the selected model
 @app.callback(
     [Output('output-image-upload', 'children'),
      Output('output-segmentation', 'children'),
@@ -101,6 +123,7 @@ app.layout = dbc.Container([
     prevent_initial_call=True
 )
 
+# Function to process the uploaded image and run the selected model
 def process_image(contents, model_name):
     if contents is None or model_name is None:
         return html.P("No image or model selected."), None, [], None
@@ -138,12 +161,13 @@ def process_image(contents, model_name):
     segmented_pil.save(buffer, format="PNG")
     encoded_segmented_img = base64.b64encode(buffer.getvalue()).decode()
 
+    # Make sure that the correct labels get applied
     if model_name == 'mask2former':
-        label_options = [{'label': CITYSCAPES_LABELS[l], 'value': l}
+        label_options = [{'label': CITYSCAPES_LABELS[l], 'value': l} # Cityscapes labels for Mask2Former
                          for l in np.unique(segmentation_map)
                          if l < len(CITYSCAPES_LABELS)]
     else:
-        label_options = [{'label': COCO_LABELS[l], 'value': l}
+        label_options = [{'label': COCO_LABELS[l], 'value': l} # COCO labels for other models (ResNet, DeepLab)
                          for l in np.unique(segmentation_map)
                          if l < len(COCO_LABELS)]
 
@@ -157,6 +181,7 @@ def process_image(contents, model_name):
         {'segmentation_map': segmentation_map.tolist()}
     )
 
+# Callback to run the selected XAI method and display the result
 @app.callback(
     Output('output-method', 'children'),
     [Input('method-dropdown', 'value'),
@@ -264,8 +289,30 @@ def run_xai(method, label_id, contents, model_name):
     print("DEBUG: model_name:", model_name)
     print("DEBUG: label_id:", label_id)
 
+    # Calculate metrics, calls the quantus metric functions.  Also uses input_np from store, and explanation
+    irof = calculate_irof_quantus(input_np, explanation_np, model, device)
+    focus = calculate_focus_quantus(explanation_np, segmentation_map)
+    effective_complexity = calculate_effective_complexity_quantus(explanation_np)
+    max_sensitivity = calculate_max_sensitivity_quantus(explanation_np, input_np, model, device, label_id)
+
+
+    print("DEBUG: Successfully generated explanation image")
+    print("DEBUG: method:", method)
+    print("DEBUG: model_name:", model_name)
+    print("DEBUG: label_id:", label_id)
     
-    return html.Img(src=f"data:image/png;base64,{encoded_explanation}", style={"width": "100%", "height": "100%"})
+    # Display the metrics
+    metrics_display = html.Div([
+        html.P(f"IROF: {irof:.4f}"),
+        html.P(f"Focus: {focus:.4f}"),
+        html.P(f"Effective Complexity: {effective_complexity:.4f}"),
+        html.P(f"Max Sensitivity: {max_sensitivity:.4f}")
+    ])
+
+    return html.Div([
+        html.Img(src=f"data:image/png;base64,{encoded_explanation}", style={"width": "100%", "height": "100%"}), 
+        metrics_display #Adds Metrics display
+    ])
 
 
 if __name__ == '__main__':
