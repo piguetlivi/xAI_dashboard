@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import cv2
+import torch.nn as nn
 from quantus import IROF, MaxSensitivity, Focus, EffectiveComplexity
 
 # --- Helper Functions ---
@@ -31,7 +32,6 @@ def normalize_heatmap(heatmap):
         normalized_heatmap = (heatmap_float - min_val) / range_val
 
     return normalized_heatmap
-
 
 # --- IROF Implementation using Quantus ---
 
@@ -164,50 +164,67 @@ def calculate_max_sensitivity_quantus(heatmap, input_image, model, device, label
              print("ERROR HINT: MaxSensitivity requires a valid 'explain_func' argument to recompute explanations on perturbed inputs.")
         raise
 
-
 def calculate_focus_quantus(heatmap, segmentation_mask):
     """
-    Calculates the Focus using quantus.
-    Expects heatmap HW float, segmentation_mask HW integer.
+    Calculates the Focus metric using Quantus for a segmentation task.
     """
+    import numpy as np
+    import torch.nn as nn
+    from quantus import Focus
+
     if not isinstance(heatmap, np.ndarray) or heatmap.ndim != 2:
         raise ValueError("Focus expects heatmap as HW numpy array.")
     if not isinstance(segmentation_mask, np.ndarray) or segmentation_mask.ndim != 2:
         raise ValueError("Focus expects segmentation_mask as HW numpy array.")
 
-    # Normalize and Binarize explanation
+    # Prepare binarized explanation and mask
     heatmap_norm = normalize_heatmap(heatmap)
-    explanation_bin = (heatmap_norm > 0.5).astype(int) # Use a threshold (0.5 is common)
-    a_batch = np.expand_dims(explanation_bin, axis=0) # (1, H, W)
+    explanation_bin = (heatmap_norm > 0.5).astype(int)
+    a_batch = np.expand_dims(explanation_bin, axis=0).astype(int)
 
-    # Binarize segmentation mask (assuming positive values indicate the class region)
-    # Important: Ensure the mask corresponds to the *target class* for which the heatmap was generated
     segmentation_mask_bin = (segmentation_mask > 0).astype(int)
-    y_batch = np.expand_dims(segmentation_mask_bin, axis=0) # Quantus Focus might expect the mask here as 'y_batch' (N, H, W)
+    y_batch = np.expand_dims(segmentation_mask_bin, axis=0).astype(int)
 
-    # 1. Instantiate the metric
+    # Dummy model and input
+    class DummyModel(nn.Module):
+        def forward(self, x): return x
+
+    dummy_model = DummyModel()
+    x_batch = np.zeros((*a_batch.shape, 3), dtype=np.float32)
+
+    # Instantiate Focus
     focus_metric = Focus(
         return_aggregate=True,
         disable_warnings=True
-        )
+    )
 
-    # 2. Call the metric instance <<< CORRECTION >>>
+    # --- PATCH HERE ---
+    # Override the evaluate_batch method to inject c_batch directly
+    def patched_evaluate_batch(self, **kwargs):
+        a_batch = kwargs.get("a_batch")
+        c_batch = kwargs.get("y_batch")  # Force y_batch as c_batch
+
+        return [self.evaluate_instance(a=a, c=c) for a, c in zip(a_batch, c_batch)]
+
+    focus_metric.evaluate_batch = patched_evaluate_batch.__get__(focus_metric, Focus)
+    # ------------------
+
     try:
-        # Focus compares a_batch (binary explanation) with y_batch (binary target mask)
+    
         focus_score = focus_metric(
+            model=dummy_model,
+            x_batch=x_batch,
+            y_batch=y_batch,  # Used by our patched method
             a_batch=a_batch,
-            y_batch=y_batch,
-            # model, x_batch, device are typically NOT needed for Focus
-            )
-        # Extract score
-        if isinstance(focus_score, list): return focus_score[0]
-        elif isinstance(focus_score, dict): return list(focus_score.values())[0]
-        else: return focus_score
+            device="cpu",
+            explain_func=None,
+            explain_func_kwargs={}
+        )
+        return focus_score[0] if isinstance(focus_score, list) else focus_score
 
     except Exception as e:
         print(f"Error during Quantus Focus calculation: {e}")
         raise
-
 
 def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id, device):
     """

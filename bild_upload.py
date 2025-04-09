@@ -6,6 +6,7 @@ import io
 import numpy as np
 from PIL import Image
 import torch
+import cv2
 from methods import (
     prepare_input,
     grad_cam, saliency_maps, lime, feature_ablation, guided_grad_cam, seg_grad_cam
@@ -18,9 +19,9 @@ from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
-from torchvision.models.segmentation import FCN_ResNet50_Weights
 from labels import COCO_LABELS, CITYSCAPES_LABELS
-from metrics import ( #Imported the quantus metric functions
+
+from metrics import (
     calculate_irof_quantus,
     calculate_max_sensitivity_quantus,
     calculate_focus_quantus,
@@ -97,7 +98,7 @@ app.layout = dbc.Container([
                     {'label': ' Focus', 'value': 'focus'},
                     {'label': ' Effective Complexity', 'value': 'effective_complexity'}
                 ],
-                value=['irof'],  # IROF selected by default
+                value=['effective_complexity'],  # Effective Complexity selected by default
                 inline=False
             ),
             html.Div(id='output-metrics'), # Results of the metrics will be displayed here
@@ -266,6 +267,19 @@ def run_xai(method, label_id, selected_metrics, contents, model_name, stored_dat
     # Calculate metrics, calls the quantus metric functions.  Also uses input_np from store, and explanation
     metrics_output = [] #List for multiple metric output
 
+    # Convert RGB (HWC) explanation image to grayscale heatmap
+    if explanation_np.ndim == 3 and explanation_np.shape[2] == 3:
+        heatmap_gray = cv2.cvtColor(explanation_np, cv2.COLOR_RGB2GRAY)
+    else:
+        heatmap_gray = explanation_np  # Already HWC or grayscale
+
+    # Get input shape (H, W)
+    H, W = input_np.shape[:2]
+
+    # Resize grayscale heatmap to match input dimensions
+    heatmap_resized = cv2.resize(heatmap_gray, (W, H))
+
+
     if 'irof' in selected_metrics:
         irof = calculate_irof_quantus(input_np, explanation_np, model, device)
         metrics_output.append(html.P(f"IROF: {irof:.4f}")) #Append results
@@ -273,11 +287,21 @@ def run_xai(method, label_id, selected_metrics, contents, model_name, stored_dat
         max_sensitivity = calculate_max_sensitivity_quantus(explanation_np, input_np, model, device, label_id)
         metrics_output.append(html.P(f"Max Sensitivity: {max_sensitivity:.4f}")) #Append results
     if 'focus' in selected_metrics:
-        focus = calculate_focus_quantus(explanation_np, segmentation_map)
-        metrics_output.append(html.P(f"Focus: {focus:.4f}")) #Append results
+        focus = calculate_focus_quantus(heatmap_resized, segmentation_map)
+        metrics_output.append(html.P(f"Focus: {focus:.4f}"))  # show value
+        metrics_output.append(dbc.Progress(
+            label=f"{int(focus * 100)}%",
+            value=int(focus * 100),
+            color="success" if focus > 0.7 else "warning" if focus > 0.4 else "danger",
+            striped=True,
+            animated=True
+    ))
     if 'effective_complexity' in selected_metrics:
-        effective_complexity = calculate_effective_complexity_quantus(explanation_np)
+        effective_complexity = calculate_effective_complexity_quantus(heatmap_resized, model, input_np, label_id, torch.device(device))
         metrics_output.append(html.P(f"Effective Complexity: {effective_complexity:.4f}")) #Append results
+
+    else:
+        metrics_output.append(html.P("No metrics selected."))
 
 
     print("DEBUG: Successfully generated explanation image")
