@@ -4,6 +4,37 @@ import cv2
 import torch.nn as nn
 from quantus import IROF, MaxSensitivity, Focus, EffectiveComplexity
 
+# --- Wrapper for Mask2Former to use with Quantus ---
+class Mask2FormerQuantusWrapper(torch.nn.Module):
+    def __init__(self, model, processor, label_id):
+        super().__init__()
+        self.model = model
+        self.processor = processor
+        self.label_id = label_id
+
+    def forward(self, x):
+        # x shape: (B, C, H, W) – channel-first
+        # Convert to PIL for processor
+        batch_images = []
+        for img in x:
+            img_np = img.detach().cpu().numpy().transpose(1, 2, 0)  # CHW → HWC
+            img_pil = Image.fromarray((img_np * 255).astype(np.uint8))
+            batch_images.append(img_pil)
+
+        inputs = self.processor(images=batch_images, return_tensors="pt")
+        inputs = {k: v.to(x.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            seg = self.processor.post_process_semantic_segmentation(
+                outputs,
+                target_sizes=[img.size[::-1] for img in batch_images]
+            )[0]
+
+        # Return dummy tensor with shape (1, H, W) for Quantus
+        seg = torch.tensor(seg).unsqueeze(0).float().to(x.device)
+        return seg
+
 # --- Helper Functions ---
 
 def normalize_heatmap(heatmap):
@@ -35,66 +66,49 @@ def normalize_heatmap(heatmap):
 
 # --- IROF Implementation using Quantus ---
 
-def calculate_irof_quantus(input_image, explanation, model, device, segmentation_method="slic", perturb_baseline="mean", disable_warnings=True):
-    """
-    Calculates the Intersection over Region of Fluctuation (IROF) using quantus.
-    Expects input_image as HWC uint8/float, explanation as HW float.
-    Expects device as torch.device object.
-    """
+def calculate_irof_quantus(input_image, explanation, model, device,
+                           segmentation_method="slic", perturb_baseline="mean", disable_warnings=True):
+
+    # Validate inputs
     if not isinstance(input_image, np.ndarray) or input_image.ndim != 3:
-         raise ValueError("IROF expects input_image as HWC numpy array.")
+        raise ValueError("IROF expects input_image as HWC numpy array.")
     if not isinstance(explanation, np.ndarray) or explanation.ndim != 2:
-         raise ValueError("IROF expects explanation as HW numpy array.")
-    if not isinstance(device, torch.device):
-         # If device string is passed, convert it. Prefer passing the object directly.
-         print("Warning (IROF): Received device string, converting to torch.device. Pass the object directly.")
-         device = torch.device(device)
+        raise ValueError("IROF expects explanation as HW numpy array.")
 
+    input_image_float = input_image.astype(np.float32)
+    x_chw = np.transpose(input_image_float, (2, 0, 1))  # Convert HWC → CHW
+    x_batch = np.expand_dims(x_chw, axis=0)  # (1, C, H, W)
+    
+    a_batch = np.expand_dims(normalize_heatmap(explanation), axis=0)
+    y_batch = np.array([0])  # ← dummy label for compatibility
 
-    # 1. Define the IROF metric
+    model = Mask2FormerQuantusWrapper(original_model, processor, label_id)
+
     irof_metric = IROF(
         segmentation_method=segmentation_method,
         perturb_baseline=perturb_baseline,
-        # perturb_func=lambda x, indices, baseline: np.where(indices, baseline, x), # Default perturb_func is usually fine
         return_aggregate=True,
         disable_warnings=disable_warnings
     )
 
-    # 2. Prepare inputs for Quantus
-    # Ensure image is float32 for model processing inside wrapper
-    input_image_float = input_image.astype(np.float32)
-    x_batch = np.expand_dims(input_image_float, axis=0) # Add batch dim (B=1, H, W, C)
-
-    # Normalize explanation and add batch dim
-    explanation_norm = normalize_heatmap(explanation)
-    a_batch = np.expand_dims(explanation_norm, axis=0) # Add batch dim (B=1, H, W)
-
-    # 3. Calculate IROF score
-    # Note: IROF in Quantus doesn't typically need y_batch or a model. It compares segmentation
-    # of the image with regions derived from the explanation.
-    # Check Quantus docs if your version requires model/y_batch here. Assuming it doesn't.
     try:
-        # Simpler call signature based on common IROF usage:
         irof_score = irof_metric(
             x_batch=x_batch,
+            y_batch=y_batch,
             a_batch=a_batch,
-            # If model and device are strictly required by your Quantus version/IROF impl:
-            # model=model,
-            # device=device,
+            model=model,
+            device=device,
         )
-        # If the metric returns a list/dict, extract the score
         if isinstance(irof_score, list):
             return irof_score[0]
         elif isinstance(irof_score, dict):
-             # Find the appropriate key, e.g., 'irof_score' or the metric name
-             # This depends on the specific Quantus version and metric settings
-             return list(irof_score.values())[0] # Example: just return the first value
+            return list(irof_score.values())[0]
         else:
-            return irof_score # Assume it's the score directly
-
+            return irof_score
     except Exception as e:
         print(f"Error during Quantus IROF calculation: {e}")
-        raise # Re-raise the exception for debugging in the main app
+        raise
+
 
 def calculate_max_sensitivity_quantus(heatmap, input_image, model, device, label_id, perturbation_size=0.1, nr_samples=10, disable_warnings=True):
     """
@@ -238,7 +252,7 @@ def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id
         raise ValueError("EffectiveComplexity expects input_image as HWC numpy array.")
     if not isinstance(device, torch.device):
          print("Warning (EffComp): Received device string, converting to torch.device. Pass the object directly.")
-         device = torch.device(device) # <<< CORRECTION: Use torch.device object internally
+         device = torch.device(device) # Use torch.device object internally
     if not isinstance(label_id, int):
          # Allow None if the underlying metric doesn't strictly need it, but Quantus API expects it
          if label_id is not None:
@@ -275,7 +289,7 @@ def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id
             x_batch=x_batch,      # Pass the input image batch
             y_batch=y_batch,      # Pass the label batch
             a_batch=a_batch,      # Pass the explanation batch
-            device=device         # Pass the torch.device object <<< CORRECTION
+            device=device         # Pass the torch.device object 
         )
         # Extract score
         if isinstance(complexity_score, list): return complexity_score[0]

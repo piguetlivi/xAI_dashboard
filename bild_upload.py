@@ -281,7 +281,7 @@ def run_xai(method, label_id, selected_metrics, contents, model_name, stored_dat
 
 
     if 'irof' in selected_metrics:
-        irof = calculate_irof_quantus(input_np, explanation_np, model, device)
+        irof = calculate_irof_quantus(input_np, heatmap_resized, model, device)
         metrics_output.append(html.P(f"IROF: {irof:.4f}")) #Append results
     if 'max_sensitivity' in selected_metrics:
         max_sensitivity = calculate_max_sensitivity_quantus(explanation_np, input_np, model, device, label_id)
