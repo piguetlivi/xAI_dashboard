@@ -3,7 +3,8 @@
 
 # Importing necessary libraries
 import dash
-from dash import html, dcc, Input, Output, State
+from dash import html, dcc, Input, Output, State, page_registry, page_container
+from info_page import layout as info_layout
 import dash_bootstrap_components as dbc
 import base64
 import io
@@ -32,133 +33,151 @@ from metrics import (
     calculate_effective_complexity_quantus
 )
 
-# Initialize Dash application with Bootstrap theme and enable callback suppression
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+external_stylesheets = [
+    dbc.themes.BOOTSTRAP,
+    "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
+]
 
-# Define the layout of the dashboard
-app.layout = dbc.Container([
-    # Title Row
-    dbc.Row([
-        dbc.Col(html.H1("XAI Dashboard for Image Segmentation"), width=12) # Changed title slightly
-    ], className="mb-3"),
+app = dash.Dash(
+    __name__,
+    external_stylesheets=external_stylesheets,
+    suppress_callback_exceptions=True
+)
 
-    # Main Row for displaying images (Original, Segmentation, Explanation)
-    dbc.Row([
-        # Original Image (Top Left)
-        dbc.Col([
-            html.H4("Original Image"),
-            # Container for the uploaded image display
-            html.Div(id="output-image-upload", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
-        ], width=4),
+# === PAGE ROUTING ===
+app.layout = html.Div([
+    dcc.Location(id='url', refresh=False),
+    html.Div(id='page-content')
+])
 
-        # Segmented Image (Top Middle) - Result from the model prediction
-        dbc.Col([
-            html.H4("Predicted Segmentation"), # Clarified title
-            # Container for the predicted segmentation map display
-            html.Div(id="output-segmentation", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
-        ], width=4),
+@app.callback(Output('page-content', 'children'), Input('url', 'pathname'))
+def display_page(pathname):
+    if pathname == "/info":
+        return info_layout
+    else:
+        return dashboard_layout()
 
-        # Explanation Image (Top Right) - Result from the XAI method
-        dbc.Col([
-            html.H4("Explanation Heatmap"), # Clarified title
-            # Container for the explanation heatmap display
-            html.Div(id="output-method", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
-        ], width=4),
-    ], style={"margin-bottom": "20px"}),  # Added more margin below the image row
+# === DASHBOARD PAGE ===
+def dashboard_layout():
+    return dbc.Container([
+        html.Div([
+            html.H1("xAI dashboard for image segmentation", style={"display": "inline-block", "margin-right": "20px"}),
+            html.A(
+                html.I(className="bi bi-info-circle", style={"fontSize": "24px"}),
+                href="/info",
+                style={"float": "right"}
+            )
+        ], style={"padding": "10px 20px"}),
 
-    # Row for controls (Uploads, Selections) and results (Metrics, Export)
-    dbc.Row([
-        # Column for Uploads and Model/Method/Label Selections
-        dbc.Col([
-            html.H4("Settings"),
-            # Upload component for the main image
-            dcc.Upload(
-                id='upload-image',
-                children=html.Button('1. Upload Image'),
-                accept='.png, .jpg, .jpeg',
-                style={"margin-bottom": "5px", "display": "block"} # Ensure block display
-            ),
-            # Upload component for the optional Ground Truth (GT) mask
-            dcc.Upload(
-                id='upload-gt-mask',
-                children=html.Button('2. Upload Ground Truth Mask (Optional)'),
-                accept='.png, .jpg, .jpeg', # Accepts common image formats for masks
-                style={"margin-bottom": "10px", "display": "block"}
-            ),
-            # Div to display the status of the GT mask upload
-            html.Div(id='gt-mask-status', style={'fontSize': 'small', 'margin-bottom': '15px', 'min-height': '20px'}),
+        # Main Row for displaying images (Original, Segmentation, Explanation)
+        dbc.Row([
+            # Original Image (Top Left)
+            dbc.Col([
+                html.H4("Original image"),
+                # Container for the uploaded image display
+                html.Div(id="output-image-upload", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+            ], width=4),
 
-            # Dropdown for selecting the segmentation model
-            dcc.Dropdown(
-                id='model-dropdown',
-                options=[
-                    {'label': 'FCN ResNet50', 'value': 'fcn_resnet50'},
-                    {'label': 'FCN ResNet101', 'value': 'fcn_resnet101'},
-                    {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
-                    {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
-                    {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
-                    {'label': 'Mask2Former', 'value': 'mask2former'}
-                ],
-                placeholder="3. Select Model",
-                className="mb-2"
-            ),
-            # Dropdown for selecting the XAI explanation method
-            dcc.Dropdown(
-                id='method-dropdown',
-                options=[
-                    {'label': 'Grad-CAM', 'value': 'gradcam'},
-                    {'label': 'Saliency Map', 'value': 'saliency'},
-                    {'label': 'LIME', 'value': 'lime'},
-                    {'label': 'Feature Ablation', 'value': 'ablation'},
-                    {'label': 'Guided Grad-CAM', 'value': 'guided_gradcam'},
-                    {'label': 'Segmentation Grad-CAM', 'value': 'seg_gradcam'}
-                ],
-                placeholder="4. Select XAI Method",
-                className="mb-2"
-            ),
-            # Dropdown for selecting the target class label for explanation/metrics
-            dcc.Dropdown(
-                id='label-dropdown',
-                options=[], # Options populated dynamically based on prediction
-                placeholder="5. Select Target Class Label",
-                className="mb-2"
-            ),
+            # Segmented Image (Top Middle) - Result from the model prediction
+            dbc.Col([
+                html.H4("Predicted segmentation"), # Clarified title
+                # Container for the predicted segmentation map display
+                html.Div(id="output-segmentation", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+            ], width=4),
 
-            # Hidden storage for predicted segmentation map and original image numpy array
-            dcc.Store(id='stored-segmentation-map'),
-            # Hidden storage for the processed Ground Truth mask numpy array
-            dcc.Store(id='stored-gt-mask-data')
+            # Explanation Image (Top Right) - Result from the XAI method
+            dbc.Col([
+                html.H4("Explanation heatmap"), # Clarified title
+                # Container for the explanation heatmap display
+                html.Div(id="output-method", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+            ], width=4),
+        ], style={"margin-bottom": "20px"}),  # Added more margin below the image row
 
-        ], width=4),  # End of Settings column
+        # Row for controls (Uploads, Selections) and results (Metrics, Export)
+        dbc.Row([
+            # Column for Uploads and Model/Method/Label Selections
+            dbc.Col([
+                html.H4("Settings"),
+                # Upload component for the main image
+                dcc.Upload(
+                    id='upload-image',
+                    children=html.Button('1. Upload Image'),
+                    accept='.png, .jpg, .jpeg',
+                    style={"margin-bottom": "5px", "display": "block"} # Ensure block display
+                ),
+                # Upload component for the optional Ground Truth (GT) mask
+                dcc.Upload(
+                    id='upload-gt-mask',
+                    children=html.Button('2. Upload ground truth (GT) mask (optional)'),
+                    accept='.png, .jpg, .jpeg', # Accepts common image formats for masks
+                    style={"margin-bottom": "10px", "display": "block"}
+                ),
+                # Div to display the status of the GT mask upload
+                html.Div(id='gt-mask-status', style={'fontSize': 'small', 'margin-bottom': '15px', 'min-height': '20px'}),
 
-        # Column for Metric Selection and Display
-        dbc.Col([
-            html.H4("Metrics"),
-            # Checklist for selecting which metrics to calculate
-            dcc.Checklist(
-                id='metrics-checklist',
-                options=[
-                    {'label': ' IoU (Explanation vs GT Mask)', 'value': 'iou'},
-                    {'label': ' Pointing Game (needs GT Mask)', 'value': 'pointing_game'},
-                    {'label': ' Effective Complexity', 'value': 'effective_complexity'}
-                ],
-                value=['effective_complexity'],  # Default selected metric(s)
-                inline=False, # Display options vertically
-                className="mb-3"
-            ),
-            # Div where calculated metric results will be displayed
-            html.Div(id='output-metrics', style={"border": "1px dashed lightgrey", "padding": "10px", "min-height": "100px"}),
-        ], width=4),  # End of Metrics column
+                # Dropdown for selecting the segmentation model
+                dcc.Dropdown(
+                    id='model-dropdown',
+                    options=[
+                        {'label': 'FCN ResNet50', 'value': 'fcn_resnet50'},
+                        {'label': 'FCN ResNet101', 'value': 'fcn_resnet101'},
+                        {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
+                        {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
+                        {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
+                        {'label': 'Mask2Former', 'value': 'mask2former'}
+                    ],
+                    placeholder="3. Select model",
+                    className="mb-2"
+                ),
+                # Dropdown for selecting the XAI explanation method
+                dcc.Dropdown(
+                    id='method-dropdown',
+                    options=[
+                        {'label': 'Grad-CAM', 'value': 'gradcam'},
+                        {'label': 'Saliency Map', 'value': 'saliency'},
+                        {'label': 'LIME', 'value': 'lime'},
+                        {'label': 'Feature Ablation', 'value': 'ablation'},
+                        {'label': 'Guided Grad-CAM', 'value': 'guided_gradcam'},
+                        {'label': 'Segmentation Grad-CAM', 'value': 'seg_gradcam'}
+                    ],
+                    placeholder="4. Select xAI method",
+                    className="mb-2"
+                ),
+                # Dropdown for selecting the target class label for explanation/metrics
+                dcc.Dropdown(
+                    id='label-dropdown',
+                    options=[], # Options populated dynamically based on prediction
+                    placeholder="5. Select target class label",
+                    className="mb-2"
+                ),
 
-        # Column for Export functionality (Placeholder)
-        dbc.Col([
-            html.H4("Export"),
-            # Button to trigger PDF export (functionality not implemented here)
-            html.Button("Generate PDF Report", id="export-pdf", className="btn btn-primary", disabled=True), # Initially disabled
-             html.P("(Export functionality not yet implemented)", style={'fontSize': 'small', 'color': 'grey'})
-        ], width=4), # End of Export column
-    ]), # End of Controls/Results row
-], fluid=True) # Use fluid container for better responsiveness
+                # Hidden storage for predicted segmentation map and original image numpy array
+                dcc.Store(id='stored-segmentation-map'),
+                # Hidden storage for the processed Ground Truth mask numpy array
+                dcc.Store(id='stored-gt-mask-data')
+
+            ], width=4),  # End of Settings column
+
+            # Column for Metric Selection and Display
+            dbc.Col([
+                html.H4("Metrics"),
+                # Checklist for selecting which metrics to calculate
+                dcc.Checklist(
+                    id='metrics-checklist',
+                    options=[
+                        {'label': ' Intersection over Union (explanation vs GT mask)', 'value': 'iou'},
+                        {'label': ' Pointing Game (needs GT mask)', 'value': 'pointing_game'},
+                        {'label': ' Effective Complexity', 'value': 'effective_complexity'}
+                    ],
+                    value=['effective_complexity'],  # Default selected metric(s)
+                    inline=False, # Display options vertically
+                    className="mb-3"
+                ),
+                # Div where calculated metric results will be displayed
+                html.Div(id='output-metrics', style={"border": "1px dashed lightgrey", "padding": "10px", "min-height": "100px"}),
+            ], width=4),  # End of Metrics column
+        ]), # End of Controls/Results row
+    ], fluid=True) # Use fluid container for better responsiveness
 
 
 # === CALLBACKS ===
@@ -764,4 +783,4 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
 
 # Entry point for running the Dash server
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
