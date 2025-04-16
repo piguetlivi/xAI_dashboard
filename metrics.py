@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import cv2
 import torch.nn as nn
-from quantus import IROF, MaxSensitivity, Focus, EffectiveComplexity
+from quantus import IROF, MaxSensitivity, PointingGame, EffectiveComplexity
 
 # --- Wrapper for Mask2Former to use with Quantus ---
 class Mask2FormerQuantusWrapper(torch.nn.Module):
@@ -110,6 +110,8 @@ def calculate_irof_quantus(input_image, explanation, model, device,
         raise
 
 
+# --- Max Sensitivity Implementation using Quantus ---
+
 def calculate_max_sensitivity_quantus(heatmap, input_image, model, device, label_id, perturbation_size=0.1, nr_samples=10, disable_warnings=True):
     """
     Calculates the Max-Sensitivity using quantus.
@@ -178,67 +180,118 @@ def calculate_max_sensitivity_quantus(heatmap, input_image, model, device, label
              print("ERROR HINT: MaxSensitivity requires a valid 'explain_func' argument to recompute explanations on perturbed inputs.")
         raise
 
-def calculate_focus_quantus(heatmap, segmentation_mask):
-    """
-    Calculates the Focus metric using Quantus for a segmentation task.
-    """
-    import numpy as np
-    import torch.nn as nn
-    from quantus import Focus
 
+# --- Pointing Game Implementation using Quantus ---
+def calculate_pointing_game_quantus(heatmap, segmentation_mask, input_image, model, device, label_id, disable_warnings=True):
+    """
+    Calculates the Pointing Game metric using Quantus.
+
+    Checks if the pixel with the highest attribution value in the heatmap
+    falls within the provided segmentation mask.
+
+    Args:
+        heatmap (np.ndarray): The explanation heatmap (HW, float).
+        segmentation_mask (np.ndarray): The binary ground truth segmentation mask (HW, int/bool).
+        input_image (np.ndarray): The input image (HWC, uint8 or float).
+                                   Needed for the Quantus API.
+        model (torch.nn.Module): The model used (or a wrapper). Needed for the Quantus API.
+        device (torch.device or str): The device to run calculations on.
+        label_id (int or None): The target label ID. Needed for Quantus API (y_batch),
+                                even if not directly used by Pointing Game logic.
+        disable_warnings (bool): Whether to disable Quantus warnings.
+
+    Returns:
+        float: The Pointing Game score (1.0 if the max attribution point is
+               within the mask, 0.0 otherwise). Returns aggregated score if
+               return_aggregate=True during init.
+
+    Raises:
+        ValueError: If input arrays have incorrect dimensions or types.
+        TypeError: If device is not a torch.device object (after potential conversion).
+        Exception: Propagates exceptions from the Quantus calculation.
+    """
+    # --- Input Validation ---
     if not isinstance(heatmap, np.ndarray) or heatmap.ndim != 2:
-        raise ValueError("Focus expects heatmap as HW numpy array.")
+        raise ValueError("PointingGame expects heatmap as HW numpy array.")
     if not isinstance(segmentation_mask, np.ndarray) or segmentation_mask.ndim != 2:
-        raise ValueError("Focus expects segmentation_mask as HW numpy array.")
+        raise ValueError("PointingGame expects segmentation_mask as HW numpy array.")
+    if not isinstance(input_image, np.ndarray) or input_image.ndim != 3:
+        raise ValueError("PointingGame expects input_image as HWC numpy array.")
+    if not isinstance(device, torch.device):
+        try:
+            print("Warning (PointingGame): Received device string, converting to torch.device. Pass the object directly for robustness.")
+            device = torch.device(device)
+        except Exception as e:
+             raise TypeError(f"Failed to convert device string to torch.device: {e}")
+    if not isinstance(label_id, int) and label_id is not None:
+        raise ValueError("PointingGame expects label_id as an integer or None.")
 
-    # Prepare binarized explanation and mask
-    heatmap_norm = normalize_heatmap(heatmap)
-    explanation_bin = (heatmap_norm > 0.5).astype(int)
-    a_batch = np.expand_dims(explanation_bin, axis=0).astype(int)
-
+    # --- Data Preparation ---
+    # Normalize heatmap
+    heatmap_normalized = normalize_heatmap(heatmap)
+    # Ensure segmentation mask is binary (0 or 1) and integer type
     segmentation_mask_bin = (segmentation_mask > 0).astype(int)
-    y_batch = np.expand_dims(segmentation_mask_bin, axis=0).astype(int)
 
-    # Dummy model and input
-    class DummyModel(nn.Module):
-        def forward(self, x): return x
+    # Prepare batches (N=1)
+    a_batch = np.expand_dims(heatmap_normalized, axis=0)  # (1, H, W)
+    s_batch = np.expand_dims(segmentation_mask_bin, axis=0) # (1, H, W) - This is the segmentation mask!
 
-    dummy_model = DummyModel()
-    x_batch = np.zeros((*a_batch.shape, 3), dtype=np.float32)
+    # Prepare image batch (Quantus API often expects float32)
+    input_image_float = input_image.astype(np.float32)
+    # Check channel dimension order if necessary, assuming HWC for consistency with other funcs
+    # Quantus might internally expect CHW, but often handles conversion.
+    # If errors occur related to shape, you might need:
+    # x_chw = np.transpose(input_image_float, (2, 0, 1)) # Convert HWC -> CHW
+    # x_batch = np.expand_dims(x_chw, axis=0) # (1, C, H, W)
+    x_batch = np.expand_dims(input_image_float, axis=0) # (1, H, W, C) - Assuming Quantus handles this
 
-    # Instantiate Focus
-    focus_metric = Focus(
+    # Prepare label batch (use dummy if None)
+    if label_id is None:
+        print("Warning (PointingGame): label_id is None, using dummy label 0 for Quantus API.")
+        y_batch = np.array([0]) # Quantus API requires y_batch
+    else:
+        y_batch = np.array([label_id]) # (1,)
+
+    # --- Instantiate Metric ---
+    # abs=True: Often useful for saliency maps where sign doesn't matter for location.
+    # normalise=True: Standard practice for many Quantus metrics.
+    # return_aggregate=True: Get a single score for the batch (which has size 1 here).
+    pg_metric = PointingGame(
+        abs=True,
+        normalise=True,  # Normalization is done before call usually, but doesn't hurt? Check docs.
         return_aggregate=True,
-        disable_warnings=True
+        disable_warnings=disable_warnings
+        # weighted=False # Default, set to True if you want score weighted by mask size
     )
 
-    # --- PATCH HERE ---
-    # Override the evaluate_batch method to inject c_batch directly
-    def patched_evaluate_batch(self, **kwargs):
-        a_batch = kwargs.get("a_batch")
-        c_batch = kwargs.get("y_batch")  # Force y_batch as c_batch
-
-        return [self.evaluate_instance(a=a, c=c) for a, c in zip(a_batch, c_batch)]
-
-    focus_metric.evaluate_batch = patched_evaluate_batch.__get__(focus_metric, Focus)
-    # ------------------
-
+    # --- Call Metric ---
     try:
-    
-        focus_score = focus_metric(
-            model=dummy_model,
-            x_batch=x_batch,
-            y_batch=y_batch,  # Used by our patched method
-            a_batch=a_batch,
-            device="cpu",
-            explain_func=None,
-            explain_func_kwargs={}
+        pointing_game_score = pg_metric(
+            model=model,        # Your model or wrapper
+            x_batch=x_batch,    # Input image batch
+            y_batch=y_batch,    # Dummy label batch (required by API)
+            a_batch=a_batch,    # Your heatmap batch
+            s_batch=s_batch,    # Your segmentation mask batch <--- KEY DIFFERENCE
+            device=device       # The torch device object
         )
-        return focus_score[0] if isinstance(focus_score, list) else focus_score
+
+        # Extract score (Quantus might return list or dict)
+        if isinstance(pointing_game_score, list):
+            # If return_aggregate=True, it should be a list with one element
+            return pointing_game_score[0]
+        elif isinstance(pointing_game_score, dict):
+             # If it returns a dict (less common for aggregate=True), take the first value
+            return list(pointing_game_score.values())[0]
+        else:
+            # Should directly be the score if aggregate=True
+            return pointing_game_score
 
     except Exception as e:
-        print(f"Error during Quantus Focus calculation: {e}")
+        print(f"Error during Quantus Pointing Game calculation: {e}")
+        # Add specific error checks if needed, e.g., for shape mismatches
         raise
+
+# --- Effective Complexity Implementation using Quantus ---
 
 def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id, device):
     """
@@ -299,3 +352,4 @@ def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id
     except Exception as e:
         print(f"Error during Quantus EffectiveComplexity calculation: {e}")
         raise
+

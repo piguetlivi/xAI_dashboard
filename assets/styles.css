@@ -2,13 +2,13 @@
 
 /* General Body Styles */
 body {
-    font-family: Arial, sans-serif; /* A more modern and readable font */
-    margin: 0; /* Remove default body margins */
-    background-color: #f8f9fa; /* A light gray background for the entire app */
+    font-family: Arial, sans-serif;
+    margin: 0; 
+    background-color: #f8f9fa; /* light gray background for the entire app */
 }
 
 /* Container Styles */
-.dbc {  /* Targeting dbc.Container (consider more specific class if needed) */
+.dbc {  /* Targeting dbc.Container */
     padding: 10px;
 }
 
