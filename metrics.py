@@ -2,38 +2,7 @@ import torch
 import numpy as np
 import cv2
 import torch.nn as nn
-from quantus import IROF, MaxSensitivity, PointingGame, EffectiveComplexity
-
-# --- Wrapper for Mask2Former to use with Quantus ---
-class Mask2FormerQuantusWrapper(torch.nn.Module):
-    def __init__(self, model, processor, label_id):
-        super().__init__()
-        self.model = model
-        self.processor = processor
-        self.label_id = label_id
-
-    def forward(self, x):
-        # x shape: (B, C, H, W) – channel-first
-        # Convert to PIL for processor
-        batch_images = []
-        for img in x:
-            img_np = img.detach().cpu().numpy().transpose(1, 2, 0)  # CHW → HWC
-            img_pil = Image.fromarray((img_np * 255).astype(np.uint8))
-            batch_images.append(img_pil)
-
-        inputs = self.processor(images=batch_images, return_tensors="pt")
-        inputs = {k: v.to(x.device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            seg = self.processor.post_process_semantic_segmentation(
-                outputs,
-                target_sizes=[img.size[::-1] for img in batch_images]
-            )[0]
-
-        # Return dummy tensor with shape (1, H, W) for Quantus
-        seg = torch.tensor(seg).unsqueeze(0).float().to(x.device)
-        return seg
+from quantus import PointingGame, EffectiveComplexity
 
 # --- Helper Functions ---
 
@@ -64,121 +33,73 @@ def normalize_heatmap(heatmap):
 
     return normalized_heatmap
 
-# --- IROF Implementation using Quantus ---
-
-def calculate_irof_quantus(input_image, explanation, model, device,
-                           segmentation_method="slic", perturb_baseline="mean", disable_warnings=True):
-
-    # Validate inputs
-    if not isinstance(input_image, np.ndarray) or input_image.ndim != 3:
-        raise ValueError("IROF expects input_image as HWC numpy array.")
-    if not isinstance(explanation, np.ndarray) or explanation.ndim != 2:
-        raise ValueError("IROF expects explanation as HW numpy array.")
-
-    input_image_float = input_image.astype(np.float32)
-    x_chw = np.transpose(input_image_float, (2, 0, 1))  # Convert HWC → CHW
-    x_batch = np.expand_dims(x_chw, axis=0)  # (1, C, H, W)
-    
-    a_batch = np.expand_dims(normalize_heatmap(explanation), axis=0)
-    y_batch = np.array([0])  # ← dummy label for compatibility
-
-    model = Mask2FormerQuantusWrapper(original_model, processor, label_id)
-
-    irof_metric = IROF(
-        segmentation_method=segmentation_method,
-        perturb_baseline=perturb_baseline,
-        return_aggregate=True,
-        disable_warnings=disable_warnings
-    )
-
-    try:
-        irof_score = irof_metric(
-            x_batch=x_batch,
-            y_batch=y_batch,
-            a_batch=a_batch,
-            model=model,
-            device=device,
-        )
-        if isinstance(irof_score, list):
-            return irof_score[0]
-        elif isinstance(irof_score, dict):
-            return list(irof_score.values())[0]
-        else:
-            return irof_score
-    except Exception as e:
-        print(f"Error during Quantus IROF calculation: {e}")
-        raise
-
-
-# --- Max Sensitivity Implementation using Quantus ---
-
-def calculate_max_sensitivity_quantus(heatmap, input_image, model, device, label_id, perturbation_size=0.1, nr_samples=10, disable_warnings=True):
+# --- Intersection over Union Implementation ---
+def calculate_iou(
+    explanation_hw: np.ndarray,
+    gt_mask_hw: np.ndarray,
+    explanation_threshold: float = 0.5,
+    normalize_explanation: bool = True,
+    epsilon: float = 1e-7 # To avoid division by zero
+    ) -> float:
     """
-    Calculates the Max-Sensitivity using quantus.
-    Expects heatmap HW float, input_image HWC uint8/float.
-    Expects device as torch.device object, label_id as int.
+    Calculates the Intersection over Union (IoU) between an explanation heatmap
+    and a ground truth binary mask.
+
+    The explanation heatmap is first normalized (optional) and then binarized
+    using the specified threshold.
+
+    Args:
+        explanation_hw: The explanation heatmap (H, W) as float numpy array.
+        gt_mask_hw: The binary ground truth mask (H, W) as uint8/int/bool numpy array.
+        explanation_threshold: Threshold to binarize the explanation map (after
+                                 optional normalization). Defaults to 0.5.
+        normalize_explanation: Whether to normalize the explanation heatmap to [0, 1]
+                               before thresholding. Defaults to True.
+        epsilon: Small value to add to the denominator to avoid division by zero.
+
+    Returns:
+        The IoU score (float) between 0.0 and 1.0.
+
+    Raises:
+        ValueError: If input arrays have incorrect dimensions or shapes mismatch.
+        TypeError: If inputs are not numpy arrays.
     """
-    if not isinstance(heatmap, np.ndarray) or heatmap.ndim != 2:
-        raise ValueError("MaxSensitivity expects heatmap as HW numpy array.")
-    if not isinstance(input_image, np.ndarray) or input_image.ndim != 3:
-        raise ValueError("MaxSensitivity expects input_image as HWC numpy array.")
-    if not isinstance(device, torch.device):
-         print("Warning (MaxSens): Received device string, converting to torch.device. Pass the object directly.")
-         device = torch.device(device)
-    if not isinstance(label_id, int):
-         raise ValueError("MaxSensitivity expects label_id as an integer.")
+    # --- Input Validation ---
+    if not isinstance(explanation_hw, np.ndarray) or explanation_hw.ndim != 2:
+        raise ValueError("IoU expects explanation_hw as HW numpy array.")
+    if not isinstance(gt_mask_hw, np.ndarray) or gt_mask_hw.ndim != 2:
+        raise ValueError("IoU expects gt_mask_hw as HW numpy array.")
+    if explanation_hw.shape != gt_mask_hw.shape:
+        raise ValueError(f"Shape mismatch: explanation {explanation_hw.shape} vs GT mask {gt_mask_hw.shape}")
 
+    # --- Prepare Explanation Mask ---
+    expl_proc = explanation_hw.astype(np.float32) # Work with float copy
 
-    # Normalize the heatmap
-    heatmap_norm = normalize_heatmap(heatmap)
-    a_batch = np.expand_dims(heatmap_norm, axis=0) # (1, H, W)
+    # 1. Normalize (optional)
+    if normalize_explanation:
+        expl_proc = normalize_heatmap(expl_proc) # Use existing helper
 
-    # Prepare image batch
-    input_image_float = input_image.astype(np.float32)
-    x_batch = np.expand_dims(input_image_float, axis=0) # (1, H, W, C)
+    # 2. Binarize using threshold
+    explanation_mask_bin = (expl_proc >= explanation_threshold).astype(np.uint8)
 
-    # Prepare label batch
-    y_batch = np.array([label_id]) # (1,)
+    # --- Prepare GT Mask (ensure binary 0/1) ---
+    gt_mask_bin = (gt_mask_hw > 0).astype(np.uint8)
 
-    # 1. Instantiate the metric
-    # Note: Quantus MaxSensitivity often requires nr_samples, perturb_func etc. during init
-    max_sensitivity_metric = MaxSensitivity(
-        nr_samples=nr_samples, # Number of perturbation samples
-        # lower_bound=0.2, # Example: lower bound for perturbation region size
-        # norm_numerator=quantus.fro_norm, # How to measure explanation difference
-        # norm_denominator=quantus.fro_norm, # How to measure input difference
-        # perturb_func=quantus.uniform_noise, # Example perturbation
-        # similarity_func=quantus.difference, # How to compare explanations
-        abs=True,
-        normalise=True,
-        disable_warnings=disable_warnings
-    )
+    # --- Calculate Intersection and Union ---
+    # Intersection: Pixels where BOTH masks are 1
+    intersection = np.sum(explanation_mask_bin * gt_mask_bin)
 
-    # 2. Call the metric instance
-    try:
-        sensitivity_score = max_sensitivity_metric(
-            model=model,
-            x_batch=x_batch, # Pass the image batch (expects N, H, W, C or N, C, H, W based on Quantus version/backend)
-            y_batch=y_batch, # Pass the label batch
-            a_batch=a_batch, # Pass the reference explanation batch
-            device=device,   # Pass the torch device object
-            # MaxSensitivity needs an explain_func to generate perturbed explanations
-            # You need to provide a function that takes (model, inputs, targets, **kwargs)
-            # and returns explanations (numpy N, H, W)
-            explain_func=None, # *** Placeholder: You MUST provide a valid explain_func or precompute perturbed explanations ***
-            explain_func_kwargs={} # Arguments for explain_func if needed
-        )
-        # Extract score
-        if isinstance(sensitivity_score, list): return sensitivity_score[0]
-        elif isinstance(sensitivity_score, dict): return list(sensitivity_score.values())[0]
-        else: return sensitivity_score
+    # Union: Pixels where AT LEAST ONE mask is 1
+    union = np.sum((explanation_mask_bin + gt_mask_bin) > 0)
 
-    except Exception as e:
-        print(f"Error during Quantus MaxSensitivity calculation: {e}")
-        # ** Common Error: explain_func is required by MaxSensitivity but not provided **
-        if "explain_func" in str(e):
-             print("ERROR HINT: MaxSensitivity requires a valid 'explain_func' argument to recompute explanations on perturbed inputs.")
-        raise
+    # --- Calculate IoU ---
+    iou = intersection / (union + epsilon)
+
+    # Clamp the value just in case (shouldn't be needed with epsilon > 0 if union >= 0)
+    iou = max(0.0, min(iou, 1.0))
+
+    print(f"Calculated IoU: Intersection={intersection}, Union={union}, IoU={iou:.4f}")
+    return float(iou)
 
 # --- Pointing Game Implementation using Quantus ---
 def calculate_pointing_game_quantus(heatmap, segmentation_mask, input_image, model, device, label_id, disable_warnings=True):

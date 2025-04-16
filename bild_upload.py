@@ -27,8 +27,7 @@ from labels import COCO_LABELS, CITYSCAPES_LABELS
 
 # Import metric calculation functions from metrics.py
 from metrics import (
-    calculate_irof_quantus,
-    calculate_max_sensitivity_quantus,
+    calculate_iou,
     calculate_pointing_game_quantus,
     calculate_effective_complexity_quantus
 )
@@ -139,9 +138,7 @@ app.layout = dbc.Container([
             dcc.Checklist(
                 id='metrics-checklist',
                 options=[
-                    {'label': ' IROF', 'value': 'irof'},
-                    {'label': ' Max Sensitivity', 'value': 'max_sensitivity'},
-                    # Updated label to indicate GT mask requirement
+                    {'label': ' IoU (Explanation vs GT Mask)', 'value': 'iou'},
                     {'label': ' Pointing Game (needs GT Mask)', 'value': 'pointing_game'},
                     {'label': ' Effective Complexity', 'value': 'effective_complexity'}
                 ],
@@ -589,35 +586,44 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
             # --- Execute Selected Metric Calculations ---
             # Ensure we pass heatmap_resized_metrics to metric functions
 
-            # IROF Metric
-            if 'irof' in selected_metrics:
-                try:
-                    irof_score = calculate_irof_quantus(
-                        input_image=input_np, explanation=heatmap_resized_metrics, # Use metrics heatmap
-                        model=model, device=device, disable_warnings=True
-                    )
-                    metrics_output.append(html.P(f"IROF: {irof_score:.4f}"))
-                    print(f"Calculated IROF: {irof_score:.4f}")
-                except Exception as e:
-                    error_msg = f"IROF Calculation Error: {e}"
-                    metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                    print(error_msg)
+             # --- Intersection over Union (IoU) Metric ---
+            if 'iou' in selected_metrics:
+                # Check if we have both the explanation heatmap and the GT mask
+                if heatmap_resized_metrics is not None and stored_gt_data and 'gt_mask' in stored_gt_data:
+                    try:
+                        # Load the binarized GT mask from store
+                        gt_mask_np = np.array(stored_gt_data['gt_mask'], dtype=np.uint8)
 
-            # Max Sensitivity Metric
-            if 'max_sensitivity' in selected_metrics:
-                try:
-                    if label_id is None: raise ValueError("Max Sensitivity requires a target label.")
-                    max_sens_score = calculate_max_sensitivity_quantus(
-                        heatmap=heatmap_resized_metrics, # Use metrics heatmap
-                        input_image=input_np, model=model, device=device, label_id=int(label_id),
-                        disable_warnings=True
-                    )
-                    metrics_output.append(html.P(f"Max Sensitivity: {max_sens_score:.4f}"))
-                    print(f"Calculated Max Sensitivity: {max_sens_score:.4f}")
-                except Exception as e:
-                    error_msg = f"Max Sensitivity Calculation Error: {e}"
-                    metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                    print(error_msg)
+                        # Check if mask dimensions match heatmap dimensions (already done for PG, but good practice)
+                        if gt_mask_np.shape == heatmap_resized_metrics.shape:
+                            # Calculate IoU (using default threshold 0.5 after normalization)
+                            iou_score = calculate_iou(
+                                explanation_hw=heatmap_resized_metrics, # HW float heatmap for metrics
+                                gt_mask_hw=gt_mask_np              # HW uint8 binary GT mask
+                                # explanation_threshold=0.5        # Override default if needed
+                            )
+                            metrics_output.append(html.P(f"IoU (Expl vs GT): {iou_score:.4f}"))
+                        else:
+                            # Dimension mismatch error
+                            error_msg = (f"IoU Error: GT mask shape {gt_mask_np.shape} "
+                                        f"does not match metrics heatmap shape {heatmap_resized_metrics.shape}.")
+                            metrics_output.append(html.P(error_msg, style={'color': 'red'}))
+                            print(error_msg)
+
+                    except Exception as e:
+                        # Error during IoU calculation
+                        error_msg = f"IoU Calculation Error: {e}"
+                        metrics_output.append(html.P(error_msg, style={'color': 'red'}))
+                        print(error_msg)
+                        import traceback; traceback.print_exc()
+                else:
+                    # Explanation or GT mask was missing
+                    if heatmap_resized_metrics is None:
+                        error_msg = "IoU Skipped: Explanation heatmap not generated."
+                    else:
+                        error_msg = "IoU Skipped: Ground Truth Mask not uploaded or invalid."
+                    metrics_output.append(html.P(error_msg, style={'color': 'orange'}))
+                    print(error_msg)          
 
             # --- Pointing Game Metric (using Ground Truth) ---
             if 'pointing_game' in selected_metrics:
