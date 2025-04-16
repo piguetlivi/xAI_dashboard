@@ -75,21 +75,21 @@ def dashboard_layout():
             dbc.Col([
                 html.H4("Original image"),
                 # Container for the uploaded image display
-                html.Div(id="output-image-upload", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+                html.Div(id="output-image-upload", style={"border": "1px solid lightgrey", "padding": "5px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
             ], width=4),
 
             # Segmented Image (Top Middle) - Result from the model prediction
             dbc.Col([
                 html.H4("Predicted segmentation"), # Clarified title
                 # Container for the predicted segmentation map display
-                html.Div(id="output-segmentation", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+                html.Div(id="output-segmentation", style={"border": "1px solid lightgrey", "padding": "5px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
             ], width=4),
 
             # Explanation Image (Top Right) - Result from the XAI method
             dbc.Col([
                 html.H4("Explanation heatmap"), # Clarified title
                 # Container for the explanation heatmap display
-                html.Div(id="output-method", style={"border": "1px solid lightgrey", "padding": "10px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
+                html.Div(id="output-method", style={"border": "1px solid lightgrey", "padding": "5px", "height": "400px", "display": "flex", "justify-content": "center", "align-items": "center"})
             ], width=4),
         ], style={"margin-bottom": "20px"}),  # Added more margin below the image row
 
@@ -110,7 +110,7 @@ def dashboard_layout():
                     id='upload-gt-mask',
                     children=html.Button('2. Upload ground truth (GT) mask (optional)'),
                     accept='.png, .jpg, .jpeg', # Accepts common image formats for masks
-                    style={"margin-bottom": "10px", "display": "block"}
+                    style={"margin-bottom": "5px", "display": "block"}
                 ),
                 # Div to display the status of the GT mask upload
                 html.Div(id='gt-mask-status', style={'fontSize': 'small', 'margin-bottom': '15px', 'min-height': '20px'}),
@@ -584,7 +584,7 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
 
     # --- Run Selected XAI Method ---
 
-    explanation_np = None  # define early so it's available after the try
+    explanation_display = html.P("Explanation could not be generated.", style={"color": "red"})
 
     try:
         xai_methods = {
@@ -595,7 +595,7 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
 
         if method_name not in xai_methods:
             raise ValueError(f"Invalid XAI method '{method_name}' selected.")
-        
+
         if method_name in ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam'] and model_name == 'mask2former':
             raise ValueError(f"{method_name} is not compatible with Mask2Former model.")
 
@@ -604,14 +604,23 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         if explanation_pil is None:
             raise RuntimeError(f"XAI method '{method_name}' returned None.")
 
-        explanation_np = np.array(explanation_pil)  # assuming you convert it here later
-        print(f"Generated explanation using '{method_name}'. Original PIL size: {explanation_pil.size}")
+        explanation_np = np.array(explanation_pil)
+        # Convert to displayable HTML if successful
+        buffer = io.BytesIO()
+        explanation_pil.save(buffer, format="PNG")
+        encoded_image = base64.b64encode(buffer.getvalue()).decode()
+        explanation_display = html.Img(
+            src=f"data:image/png;base64,{encoded_explanation}",
+            style={"maxWidth": "100%", "maxHeight": "380px", "display": "block", "margin": "0 auto"}
+        )
 
-    except ValueError as ve:
-        explanation_display = html.P(str(ve), style={'color': 'red'})
+    except (ValueError, RuntimeError) as err:
+        explanation_display = html.P(str(err), style={"color": "red"})
 
     except Exception as e:
-        explanation_display = html.P("Failed to generate explanation.", style={'color': 'red'})
+        import traceback
+        traceback.print_exc()
+        explanation_display = html.P(f"Unexpected error: {str(e)}", style={"color": "red"})
 
 
         # Resize Explanation PIL for Display
@@ -633,8 +642,10 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         explanation_pil_resized_display.save(buffer, format="PNG")
         encoded_explanation = base64.b64encode(buffer.getvalue()).decode()
         # Update the display component
-        explanation_display = html.Img(src=f"data:image/png;base64,{encoded_explanation}", style={'max-width': '100%', 'max-height': '380px'})
-
+        explanation_display = html.Img(
+            src=f"data:image/png;base64,{encoded_explanation}",
+            style={"maxWidth": "100%", "maxHeight": "380px", "display": "block", "margin": "0 auto"}
+        )
 
     except Exception as e:
         print(f"Error running XAI method '{method_name}': {e}")
