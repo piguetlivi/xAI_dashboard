@@ -1,4 +1,14 @@
-# 
+# This code is for future work and is not yet complete.
+# The code is designed to calculate the IROF (Input Relevance Output Fidelity) metric using the Quantus library,
+# with specific handling for Mask2Former models using its processor and a wrapper.
+
+import numpy as np
+import torch
+from transformers import PreTrainedTokenizerBase
+from quantus.metrics import IROF
+from quantus.utils import normalize_heatmap
+from quantus.wrappers import Mask2FormerQuantusWrapper
+from typing import Optional, Union
 
 def calculate_irof_quantus(
     input_image_hwc: np.ndarray,    # Original image HWC uint8
@@ -12,7 +22,9 @@ def calculate_irof_quantus(
     segmentation_method: str = 'slic', # IROF param
     perturb_baseline: str = 'black'    # IROF param
     ) -> float:
+    
     """Calculates IROF, handling Mask2Former wrapping."""
+
     # --- Input Validation ---
     if not isinstance(input_image_hwc, np.ndarray) or input_image_hwc.ndim != 3: raise ValueError(...)
     if not isinstance(explanation_hw, np.ndarray) or explanation_hw.ndim != 2: raise ValueError(...)

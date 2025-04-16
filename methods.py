@@ -1,4 +1,6 @@
 # This file contains the code to implement various explainable AI (XAI) methods for semantic segmentation models.
+# It includes methods like Seg-Grad-CAM, Grad-CAM, Feature Ablation, Saliency Maps, LIME, and Guided Grad-CAM.
+# The code is designed to work with models from Hugging Face and torchvision, specifically for semantic segmentation tasks.
 
 # Import necessary libraries
 from torchvision import transforms
@@ -74,8 +76,6 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     Returns:
         PIL.Image with CAM overlay
     """
-    
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device).eval()
     normalized_inp = normalized_inp.to(device)
@@ -121,7 +121,7 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     ).to(device)
 
     # After mask resizing
-    print("Shape of mask_resized:", mask_resized.shape)
+    print("Shape of mask_resized:", mask_resized.shape) # Debugging output
     debug_mask = mask_resized.squeeze().detach().cpu().numpy()
     plt.imshow(debug_mask, cmap="gray")
     plt.title("Resized Class Mask")
@@ -130,7 +130,7 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     # Second forward pass: this time with gradients
     outputs = model(normalized_inp)
     masks = outputs.masks_queries_logits  # shape: [1, num_queries, Hm, Wm]
-    print("Shape of masks:", masks.shape)
+    print("Shape of masks:", masks.shape) # Debugging output
 
     # Get a scalar "score" by dotting class mask with predicted masks
     score = (masks * mask_resized).sum()
@@ -142,8 +142,8 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     gradients = target_gradients[0]  # could be 3D or 4D
     activations = target_activations[0]
 
-    print("Shape of gradients:", gradients.shape)
-    print("Shape of activations:", activations.shape)
+    print("Shape of gradients:", gradients.shape) # Debugging output
+    print("Shape of activations:", activations.shape) # Debugging output
 
     # Support different gradient shapes (your gradients were [1, C, L])
     if gradients.ndim == 4:
@@ -155,16 +155,16 @@ def seg_grad_cam(model, label, input_tensor, normalized_inp):
     else:
         raise ValueError(f"Unexpected gradient shape: {gradients.shape}")
 
-    print("Shape of weights:", weights.shape)
+    print("Shape of weights:", weights.shape) # Debugging output
 
     # Compute class activation map
     cam = torch.relu((weights * activations).sum(dim=1)).squeeze()
-    print("Shape of cam before normalization:", cam.shape)
+    print("Shape of cam before normalization:", cam.shape) # Debugging output
 
     cam -= cam.min()
     cam /= cam.max() + 1e-8  # Normalize to [0, 1]
 
-    print("Shape of cam after normalization:", cam.shape)
+    print("Shape of cam after normalization:", cam.shape) # Debugging output
 
     # Convert original image to numpy (HWC) and scale to [0,1]
     input_np = input_tensor.cpu().numpy().transpose(1, 2, 0)  # [H, W, C]

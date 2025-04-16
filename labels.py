@@ -1,4 +1,4 @@
-# Description: This file contains the labels for the different models. 
+# This file contains the labels for the different models. 
 # The labels are used to map the class indices to the class names.
 
 # Import the required libraries

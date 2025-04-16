@@ -1,5 +1,5 @@
-# This script creates a Dash web application for visualizing and explaining image segmentation models
-# using various XAI methods and evaluating explanations with metrics, including against Ground Truth.
+# This script creates a Dash web application for visualizing and explaining image segmentation models.
+# Using various XAI methods and evaluating explanations with metrics, including against ground truth.
 
 # Importing necessary libraries
 import dash
@@ -78,14 +78,14 @@ app.layout = dbc.Container([
                 accept='.png, .jpg, .jpeg',
                 style={"margin-bottom": "5px", "display": "block"} # Ensure block display
             ),
-            # --- NEW: Upload component for the optional Ground Truth (GT) mask ---
+            # Upload component for the optional Ground Truth (GT) mask
             dcc.Upload(
                 id='upload-gt-mask',
                 children=html.Button('2. Upload Ground Truth Mask (Optional)'),
                 accept='.png, .jpg, .jpeg', # Accepts common image formats for masks
                 style={"margin-bottom": "10px", "display": "block"}
             ),
-            # --- NEW: Div to display the status of the GT mask upload ---
+            # Div to display the status of the GT mask upload
             html.Div(id='gt-mask-status', style={'fontSize': 'small', 'margin-bottom': '15px', 'min-height': '20px'}),
 
             # Dropdown for selecting the segmentation model
@@ -126,7 +126,7 @@ app.layout = dbc.Container([
 
             # Hidden storage for predicted segmentation map and original image numpy array
             dcc.Store(id='stored-segmentation-map'),
-            # --- NEW: Hidden storage for the processed Ground Truth mask numpy array ---
+            # Hidden storage for the processed Ground Truth mask numpy array
             dcc.Store(id='stored-gt-mask-data')
 
         ], width=4),  # End of Settings column
@@ -165,7 +165,7 @@ app.layout = dbc.Container([
 
 # Callback 1: Process uploaded image, run model prediction, update displays and label options.
 @app.callback(
-    [Output('output-image-upload', 'children'),      # Display original image
+    [Output('output-image-upload', 'children'),     # Display original image
      Output('output-segmentation', 'children'),     # Display predicted segmentation
      Output('label-dropdown', 'options'),           # Populate label choices
      Output('stored-segmentation-map', 'data')],    # Store prediction and input array
@@ -252,20 +252,10 @@ def process_image(contents, model_name, filename):
             else:
                  input_image_pil = image # Fallback to original PIL if first return isn't PIL
 
-
-            # Optional: Clean up the temporary file (uncomment if desired)
-            # import os
-            # try:
-            #     os.remove(temp_image_path)
-            #     print(f"Removed temporary file: {temp_image_path}")
-            # except OSError as e:
-            #     print(f"Error removing temporary file {temp_image_path}: {e}")
-
         else:
             # For other models, assume they accept the PIL image directly
             input_image_pil, output_predictions_pil = predictor(image)
-        # --- MODIFICATION END ---
-
+        
 
         # Convert prediction output to NumPy array (HxW)
         # Ensure the output_predictions_pil is indeed a PIL Image before converting
@@ -339,7 +329,7 @@ def process_image(contents, model_name, filename):
             label_options, # Update dropdown
             stored_data) # Store data
 
-# --- NEW Callback 2: Process uploaded Ground Truth mask ---
+# --- Callback 2: Process uploaded Ground Truth mask ---
 @app.callback(
     Output('stored-gt-mask-data', 'data'),      # Store processed GT mask array
     Output('gt-mask-status', 'children'),       # Provide user feedback on upload

@@ -1,3 +1,7 @@
+# This file contains the implementation of various metrics for evaluating model explanations.
+# It includes functions for calculating Intersection over Union (IoU), Pointing Game, and Effective Complexity.
+# The metrics are designed to work with heatmaps and segmentation masks, and they utilize the Quantus library for some calculations.
+
 import torch
 import numpy as np
 import cv2
@@ -75,7 +79,7 @@ def calculate_iou(
     # --- Prepare Explanation Mask ---
     expl_proc = explanation_hw.astype(np.float32) # Work with float copy
 
-    # 1. Normalize (optional)
+    # 1. Normalize
     if normalize_explanation:
         expl_proc = normalize_heatmap(expl_proc) # Use existing helper
 
@@ -92,7 +96,7 @@ def calculate_iou(
     # Union: Pixels where AT LEAST ONE mask is 1
     union = np.sum((explanation_mask_bin + gt_mask_bin) > 0)
 
-    # --- Calculate IoU ---
+    # Calculate IoU
     iou = intersection / (union + epsilon)
 
     # Clamp the value just in case (shouldn't be needed with epsilon > 0 if union >= 0)
@@ -117,7 +121,6 @@ def calculate_pointing_game_quantus(heatmap, segmentation_mask, input_image, mod
         try: device = torch.device(str(device))
         except Exception as e: raise TypeError(f"Failed to convert device: {e}")
 
-
     # --- Data Preparation ---
     heatmap_normalized = normalize_heatmap(heatmap)
     segmentation_mask_bin = (segmentation_mask > 0).astype(np.uint8) # HW
@@ -130,14 +133,12 @@ def calculate_pointing_game_quantus(heatmap, segmentation_mask, input_image, mod
     # s_batch: Reshape HW mask to (N, C, H, W) where C=1
     s_batch_hw = np.expand_dims(segmentation_mask_bin, axis=0) # (1, H, W)
     s_batch = np.expand_dims(s_batch_hw, axis=1)              # (1, 1, H, W) <--- ADD CHANNEL DIM
-    print(f"Calculate Pointing Game: Prepared s_batch shape {s_batch.shape}")
-    # --- MODIFICATION END ---
+    print(f"Calculate Pointing Game: Prepared s_batch shape {s_batch.shape}") # Debugging output
 
     # --- Create DUMMY x_batch with matching (N, C, H, W) shape ---
     # Use float32 type as often expected
     dummy_x_batch = np.zeros_like(s_batch, dtype=np.float32) # Shape (1, 1, H, W)
-    print(f"Calculate Pointing Game: Using dummy x_batch shape {dummy_x_batch.shape}")
-    # ---
+    print(f"Calculate Pointing Game: Using dummy x_batch shape {dummy_x_batch.shape}") # Debugging output
 
     # Prepare label batch (y_batch)
     if label_id is None:
@@ -147,21 +148,21 @@ def calculate_pointing_game_quantus(heatmap, segmentation_mask, input_image, mod
         except ValueError: raise ValueError(f"Invalid label_id: {label_id}")
 
 
-    # --- Instantiate Metric ---
+    # Instantiate Metric
     pg_metric = PointingGame(
         abs=True,
-        normalise=False, # We already normalized 'a_batch'
+        normalise=False, # 'a_batch' already normalized
         return_aggregate=False, # Get score for the single instance
         disable_warnings=disable_warnings
     )
 
-    # --- Call Metric ---
+    # Call Metric
     try:
         pointing_game_scores = pg_metric(
             model=model,
             x_batch=dummy_x_batch,  # Shape (1, 1, H, W)
             y_batch=y_batch,
-            a_batch=a_batch,        # Shape (1, H, W) - Check if this needs changing too!
+            a_batch=a_batch,        # Shape (1, H, W)
             s_batch=s_batch,        # Shape (1, 1, H, W)
             device=device
         )
@@ -199,7 +200,6 @@ def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id
          if label_id is not None:
              raise ValueError("EffectiveComplexity expects label_id as an integer or None.")
 
-
     # Normalize heatmap
     heatmap_normalized = normalize_heatmap(heatmap)
     a_batch = np.expand_dims(heatmap_normalized, axis=0) # (1, H, W)
@@ -210,9 +210,8 @@ def calculate_effective_complexity_quantus(heatmap, model, input_image, label_id
 
     # Prepare label batch (handle None)
     if label_id is None:
-        # Quantus API requires y_batch. Use a dummy value if None is passed.
-        # Check if the specific metric *really* needs it internally. EffectiveComplexity might not.
-        print("Warning (EffComp): label_id is None, using dummy label 0 for Quantus API.")
+        # Quantus API requires y_batch. Dummy value is needed if None is passed.
+        print("Warning (EffComp): label_id is None, using dummy label 0 for Quantus API.") # Debugging output
         y_batch = np.array([0])
     else:
         y_batch = np.array([label_id]) # (1,)

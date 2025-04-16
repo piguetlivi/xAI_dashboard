@@ -1,4 +1,5 @@
 # Description: This script contains functions to load the pre-trained models from the PyTorch model zoo and Hugging Face.
+# The models include Mask2Former, FCN ResNet50, FCN ResNet101, DeepLabV3 ResNet50, DeepLabV3 ResNet101, and DeepLabV3 MobileNetV3 Large.
 
 # Import necessary libraries
 import torch

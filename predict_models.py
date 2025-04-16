@@ -1,4 +1,6 @@
 # This file contains the code to predict the output of the image using the pretrained models
+# From torchvision library. The models used are FCN Resnet101, FCN Resnet50, DeepLabV3 Resnet50, DeepLabV3 Resnet101 and DeepLabV3 MobilenetV3 Large.
+# The code also contains the code to predict the output of the image using the Mask2Former model from Hugging Face.
 
 # Import required libraries
 import torch
@@ -12,8 +14,7 @@ from models import mask2former_model
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-
-
+# Function to predict the output of the image using the Mask2Former model.
 def predict_mask2former(image_path, task="semantic"):
     
     """
@@ -38,6 +39,7 @@ def predict_mask2former(image_path, task="semantic"):
     return input_image, processed
 
 
+# Function to predict the output of the image using the FCN Resnet101 model.
 def predict_fcn_resnet101(image_path):
 
     """
@@ -84,6 +86,7 @@ def predict_fcn_resnet101(image_path):
     # returning the input image and the output predictions
     return input_image , output_predictions
 
+# Function to predict the output of the image using the FCN Resnet50 model.
 def predict_fcn_resnet50(image_path):
 
     """
@@ -127,6 +130,7 @@ def predict_fcn_resnet50(image_path):
     # returning the input image and the output predictions
     return input_image , output_predictions
 
+# Function to predict the output of the image using the DeepLabV3 Resnet50 model.
 def predict_deeplabv3_resnet50(image_path):
 
     """
@@ -169,6 +173,7 @@ def predict_deeplabv3_resnet50(image_path):
     # returning the input image and the output predictions
     return input_image , output_predictions
 
+# Function to predict the output of the image using the DeepLabV3 Resnet101 model.
 def predict_deeplabv3_resnet101(image_path):
     """
     Function to predict the output of the image using the DeepLabV3 Resnet101 model.
