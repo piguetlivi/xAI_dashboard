@@ -1,4 +1,4 @@
-# xAI dashboard for image segmentation
+# xAI dashboard for semantic segmentation
 
 ## Implementation
 
