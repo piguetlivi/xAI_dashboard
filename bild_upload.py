@@ -23,7 +23,7 @@ from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
 )
-from labels import COCO_LABELS, CITYSCAPES_LABELS
+from labels import COCO_LABELS, CITYSCAPES_LABELS, COCO_COLOR_DICT, CITYSCAPES_COLOR_DICT, DEFAULT_COLOR
 
 # Import metric calculation functions from metrics.py
 from metrics import (
@@ -300,34 +300,98 @@ def process_image(contents, model_name, filename):
     segmented_display = html.Img(src=f'data:image/png;base64,{encoded_segmented_img}', style={'max-width': '100%', 'max-height': '380px'})
 
     # --- Prepare Label Dropdown Options ---
+    # Select the appropriate color dictionary based on the model
     if model_name == 'mask2former':
-        LABELS = CITYSCAPES_LABELS
+        COLOR_DICT = CITYSCAPES_COLOR_DICT
+        LABELS = CITYSCAPES_LABELS # For dropdown later
     else:
-        LABELS = COCO_LABELS
+        COLOR_DICT = COCO_COLOR_DICT
+        LABELS = COCO_LABELS # For dropdown later
 
+    # Ensure prediction map is 2D (H, W) for coloring
+    if predicted_segmentation_map.ndim == 3 and predicted_segmentation_map.shape[-1] == 1:
+        pred_map_2d = predicted_segmentation_map.squeeze(-1)
+    elif predicted_segmentation_map.ndim == 2:
+        pred_map_2d = predicted_segmentation_map
+    else:
+        print(f"Error: Unexpected prediction map shape: {predicted_segmentation_map.shape}")
+        # Fallback: return black image
+        segmented_image_color = np.zeros((input_np.shape[0], input_np.shape[1], 3), dtype=np.uint8)
+        pred_map_2d = None # Flag to skip coloring loop
+
+    if pred_map_2d is not None:
+        # Ensure the map dtype is suitable for indexing/comparison (e.g., integer)
+        if not np.issubdtype(pred_map_2d.dtype, np.integer):
+             print(f"Warning: Prediction map dtype is {pred_map_2d.dtype}, converting to int.")
+             try:
+                 pred_map_2d = pred_map_2d.astype(int)
+             except ValueError:
+                 print("Error: Could not convert prediction map to integer type for coloring.")
+                 pred_map_2d = None # Skip coloring
+                 segmented_image_color = np.zeros((input_np.shape[0], input_np.shape[1], 3), dtype=np.uint8)
+
+
+    if pred_map_2d is not None:
+        # Create an empty RGB image to store the colored segmentation
+        segmented_image_color = np.zeros((pred_map_2d.shape[0], pred_map_2d.shape[1], 3), dtype=np.uint8)
+
+        # Iterate through unique labels found in the map and assign colors
+        for label_id in unique_labels:
+            # Convert label_id to int just in case it's not already
+            label_id_int = int(label_id)
+
+            # Get the color from the dictionary, use default if label_id is not found
+            color = COLOR_DICT.get(label_id_int, DEFAULT_COLOR)
+
+            # Find all pixels with this label_id and set their color
+            segmented_image_color[pred_map_2d == label_id_int] = color
+
+            # Optional: Print warning for unexpected labels that use default color
+            if label_id_int not in COLOR_DICT:
+                 print(f"Warning: Predicted label ID {label_id_int} not found in {model_name}'s color dictionary. Using default color {DEFAULT_COLOR}.")
+   
+
+    # Convert the colored NumPy array to a PIL image for display
+    segmented_pil = Image.fromarray(segmented_image_color) # segmented_image_color is already uint8
+    buffer = io.BytesIO()
+    segmented_pil.save(buffer, format="PNG")
+    encoded_segmented_img = base64.b64encode(buffer.getvalue()).decode()
+    segmented_display = html.Img(src=f'data:image/png;base64,{encoded_segmented_img}', style={'max-width': '100%', 'max-height': '380px'})
+
+    # --- Prepare Label Dropdown Options ---
+    # LABELS list was already selected above based on model_name
     label_options = []
     for label_id in unique_labels:
-        label_id_int = int(label_id) # Ensure integer comparison
+        label_id_int = int(label_id) # Ensure integer
+        # Check if label_id is a valid index for the selected LABELS list
         if 0 <= label_id_int < len(LABELS):
             label_name = LABELS[label_id_int]
-            label_options.append({'label': f"{label_id_int}: {label_name}", 'value': label_id_int})
+            # Provide a clear name, handling COCO background specifically
+            if model_name != 'mask2former' and label_id_int == 0 and label_name == '__background__':
+                 display_text = f"{label_id_int}: Background"
+            else:
+                 display_text = f"{label_id_int}: {label_name}"
+            label_options.append({'label': display_text, 'value': label_id_int})
         else:
-            label_options.append({'label': f"{label_id_int}: Unknown", 'value': label_id_int})
+            # Handle labels that might be outside the defined list (e.g., 'unlabeled' 255)
+            label_options.append({'label': f"{label_id_int}: Unknown/Other", 'value': label_id_int})
 
-    print(f"DEBUG: Unique predicted labels: {unique_labels}")
-    print(f"DEBUG: Generated label options: {label_options}")
+    print(f"DEBUG: Generated label options (using fixed labels): {label_options}")
 
     # --- Store Data ---
+    # Store the raw prediction map (integers) and the original input image
     stored_data = {
-        'predicted_segmentation_map': predicted_segmentation_map.tolist(),
+        # Ensure stored map is integer list
+        'predicted_segmentation_map': predicted_segmentation_map.astype(int).tolist(),
         'input_np': input_np.tolist()
     }
 
     # Return updated components
     return (html.Img(src=contents, style={'max-width': '100%', 'max-height': '380px'}), # Display original
-            segmented_display, # Display colored prediction
-            label_options, # Update dropdown
-            stored_data) # Store data
+            segmented_display, # Display prediction colored with FIXED map
+            label_options,     # Update dropdown with correct names
+            stored_data)       # Store raw prediction and input array
+    
 
 # --- Callback 2: Process uploaded Ground Truth mask ---
 @app.callback(

@@ -40,223 +40,202 @@ def predict_mask2former(image_path, task="semantic"):
 
 
 # Function to predict the output of the image using the FCN Resnet101 model.
-def predict_fcn_resnet101(image_path):
-
+def predict_fcn_resnet101(input_image_pil: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Function to predict the output of the image using the FCN Resnet101 model.
+    Predicts segmentation using the FCN Resnet101 model from PyTorch Hub.
+    Args:
+        input_image_pil (PIL.Image.Image): The input image as a PIL Image object (RGB).
+    Returns:
+        tuple: A tuple containing:
+            - input_image_pil (PIL.Image.Image): The original input image.
+            - output_predictions_pil (PIL.Image.Image): The predicted segmentation map as a PIL Image.
     """
-
-    # loading the model
+    print("Running FCN ResNet101 prediction...")
+    # Load the model
     model = torch.hub.load('pytorch/vision:v0.10.0', 'fcn_resnet101', pretrained=True)
+    model.to(device).eval() # Set model to evaluation mode and move to device
 
-    # setting the model to evaluation mode
-    model.eval()
-
-    # loading the input image
-    input_image = Image.open(image_path)
-
-    # converting the image to RGB
-    input_image = input_image.convert("RGB")
-
-    # set preprocessing for image
+    # Define preprocessing
     preprocess = transforms.Compose([
-        # converting the image to tensor
         transforms.ToTensor(),
-        # normalizing the image
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # preprocessing the input image
-    input_tensor = preprocess(input_image)
-    # adding the batch dimension
-    input_batch = input_tensor.unsqueeze(0)
+    # Preprocess the input PIL image
+    input_tensor = preprocess(input_image_pil)
+    input_batch = input_tensor.unsqueeze(0).to(device) # Add batch dimension and move to device
 
-    # checking if the GPU is available
-    if torch.cuda.is_available():
-        input_batch = input_batch.to('cuda')
-        model.to('cuda')
-
-    # predicting the output
+    # Perform inference
     with torch.no_grad():
-        output = model(input_batch)['out'][0]
-    
-    # getting the predictions
-    output_predictions = output.argmax(0)
+        output = model(input_batch)['out'][0] # Get output, remove batch dim
 
-    # returning the input image and the output predictions
-    return input_image , output_predictions
+    # Get class predictions
+    output_predictions = output.argmax(0) # Get the class index for each pixel
 
-# Function to predict the output of the image using the FCN Resnet50 model.
-def predict_fcn_resnet50(image_path):
+    # Convert predictions tensor to PIL Image
+    output_predictions_np = output_predictions.byte().cpu().numpy() # Ensure uint8 for PIL
+    output_predictions_pil = Image.fromarray(output_predictions_np)
 
+    print("FCN ResNet101 prediction finished.")
+    # Return the original input PIL and the output PIL prediction
+    return input_image_pil, output_predictions_pil
+
+def predict_fcn_resnet50(input_image_pil: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Function to predict the output of the image using the FCN Resnet50 model.
+    Predicts segmentation using the FCN Resnet50 model from PyTorch Hub.
+    Args:
+        input_image_pil (PIL.Image.Image): The input image as a PIL Image object (RGB).
+    Returns:
+        tuple: A tuple containing:
+            - input_image_pil (PIL.Image.Image): The original input image.
+            - output_predictions_pil (PIL.Image.Image): The predicted segmentation map as a PIL Image.
     """
-
-    # loading the model
+    print("Running FCN ResNet50 prediction...")
+    # Load the model
     model = torch.hub.load('pytorch/vision:v0.10.0', 'fcn_resnet50', pretrained=True)
+    model.to(device).eval() # Set model to evaluation mode and move to device
 
-    # setting the model to evaluation mode
-    model.eval()
-
-    # loading the input image
-    input_image = Image.open(image_path)
-
-    # converting the image to RGB
-    input_image = input_image.convert("RGB")
-
-    # set preprocessing for image
+    # Define preprocessing
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # preprocessing the input image
-    input_tensor = preprocess(input_image)
-    # adding the batch dimension
-    input_batch = input_tensor.unsqueeze(0)
+    # Preprocess the input PIL image
+    input_tensor = preprocess(input_image_pil)
+    input_batch = input_tensor.unsqueeze(0).to(device) # Add batch dimension and move to device
 
-    # checking if the GPU is available
-    if torch.cuda.is_available():
-        input_batch = input_batch.to('cuda')
-        model.to('cuda')
-
+    # Perform inference
     with torch.no_grad():
-        output = model(input_batch)['out'][0]
-    
-    # getting the predictions
-    output_predictions = output.argmax(0)
+        output = model(input_batch)['out'][0] # Get output, remove batch dim
 
-    # returning the input image and the output predictions
-    return input_image , output_predictions
+    # Get class predictions
+    output_predictions = output.argmax(0) # Get the class index for each pixel
 
-# Function to predict the output of the image using the DeepLabV3 Resnet50 model.
-def predict_deeplabv3_resnet50(image_path):
+    # Convert predictions tensor to PIL Image
+    output_predictions_np = output_predictions.byte().cpu().numpy() # Ensure uint8 for PIL
+    output_predictions_pil = Image.fromarray(output_predictions_np)
 
+    print("FCN ResNet50 prediction finished.")
+    # Return the original input PIL and the output PIL prediction
+    return input_image_pil, output_predictions_pil
+
+def predict_deeplabv3_resnet50(input_image_pil: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Function to predict the output of the image using the DeepLabV3 Resnet50 model.
+    Predicts segmentation using the DeepLabV3 Resnet50 model from PyTorch Hub.
+    Args:
+        input_image_pil (PIL.Image.Image): The input image as a PIL Image object (RGB).
+    Returns:
+        tuple: A tuple containing:
+            - input_image_pil (PIL.Image.Image): The original input image.
+            - output_predictions_pil (PIL.Image.Image): The predicted segmentation map as a PIL Image.
     """
-
-    # loading the model
+    print("Running DeepLabV3 ResNet50 prediction...")
+    # Load the model
     model = torch.hub.load('pytorch/vision:v0.10.0', 'deeplabv3_resnet50', pretrained=True)
+    model.to(device).eval() # Set model to evaluation mode and move to device
 
-    # setting the model to evaluation mode
-    model.eval()
-
-    # loading the input image
-    input_image = Image.open(image_path)
-
-    # converting the image to RGB
-    input_image = input_image.convert("RGB")
-
-    # set preprocessing for image
+    # Define preprocessing
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # preprocessing the input image
-    input_tensor = preprocess(input_image)
-    # adding the batch dimension
-    input_batch = input_tensor.unsqueeze(0)
+    # Preprocess the input PIL image
+    input_tensor = preprocess(input_image_pil)
+    input_batch = input_tensor.unsqueeze(0).to(device) # Add batch dimension and move to device
 
-    # checking if the GPU is available
-    if torch.cuda.is_available():
-        input_batch = input_batch.to('cuda')
-        model.to('cuda')
-
-    # predicting the output
+    # Perform inference
     with torch.no_grad():
-        output = model(input_batch)['out'][0]
-    output_predictions = output.argmax(0)
+        output = model(input_batch)['out'][0] # Get output, remove batch dim
 
-    # returning the input image and the output predictions
-    return input_image , output_predictions
+    # Get class predictions
+    output_predictions = output.argmax(0) # Get the class index for each pixel
 
-# Function to predict the output of the image using the DeepLabV3 Resnet101 model.
-def predict_deeplabv3_resnet101(image_path):
+    # Convert predictions tensor to PIL Image
+    output_predictions_np = output_predictions.byte().cpu().numpy() # Ensure uint8 for PIL
+    output_predictions_pil = Image.fromarray(output_predictions_np)
+
+    print("DeepLabV3 ResNet50 prediction finished.")
+    # Return the original input PIL and the output PIL prediction
+    return input_image_pil, output_predictions_pil
+
+def predict_deeplabv3_resnet101(input_image_pil: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Function to predict the output of the image using the DeepLabV3 Resnet101 model.
+    Predicts segmentation using the DeepLabV3 Resnet101 model from PyTorch Hub.
+    Args:
+        input_image_pil (PIL.Image.Image): The input image as a PIL Image object (RGB).
+    Returns:
+        tuple: A tuple containing:
+            - input_image_pil (PIL.Image.Image): The original input image.
+            - output_predictions_pil (PIL.Image.Image): The predicted segmentation map as a PIL Image.
     """
-
-    # loading the model
+    print("Running DeepLabV3 ResNet101 prediction...")
+    # Load the model
     model = torch.hub.load('pytorch/vision:v0.10.0', 'deeplabv3_resnet101', pretrained=True)
+    model.to(device).eval() # Set model to evaluation mode and move to device
 
-    # setting the model to evaluation mode
-    model.eval()
-
-    # loading the input image
-    input_image = Image.open(image_path)
-
-    # converting the image to RGB
-    input_image = input_image.convert("RGB")
-
-    # set preprocessing for image
+    # Define preprocessing
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # preprocessing the input image
-    input_tensor = preprocess(input_image)
-    input_batch = input_tensor.unsqueeze(0)
+    # Preprocess the input PIL image
+    input_tensor = preprocess(input_image_pil)
+    input_batch = input_tensor.unsqueeze(0).to(device) # Add batch dimension and move to device
 
-    # checking if the GPU is available
-    if torch.cuda.is_available():
-        input_batch = input_batch.to('cuda')
-        model.to('cuda')
-
-    # predicting the output
+    # Perform inference
     with torch.no_grad():
-        output = model(input_batch)['out'][0]
-    
-    # getting the predictions
-    output_predictions = output.argmax(0)
+        output = model(input_batch)['out'][0] # Get output, remove batch dim
 
-    # returning the input image and the output predictions
-    return input_image , output_predictions
+    # Get class predictions
+    output_predictions = output.argmax(0) # Get the class index for each pixel
 
-# Function to predict the output of the image using the DeepLabV3 MobilenetV3 Small model.
-def predict_deeplabv3_mobilenetv3_large(image_path):
-    
+    # Convert predictions tensor to PIL Image
+    output_predictions_np = output_predictions.byte().cpu().numpy() # Ensure uint8 for PIL
+    output_predictions_pil = Image.fromarray(output_predictions_np)
+
+    print("DeepLabV3 ResNet101 prediction finished.")
+    # Return the original input PIL and the output PIL prediction
+    return input_image_pil, output_predictions_pil
+
+def predict_deeplabv3_mobilenetv3_large(input_image_pil: Image.Image) -> tuple[Image.Image, Image.Image]:
     """
-    Function to predict the output of the image using the DeepLabV3 MobilenetV3 Large model.
+    Predicts segmentation using the DeepLabV3 MobileNetV3-Large model from PyTorch Hub.
+    Args:
+        input_image_pil (PIL.Image.Image): The input image as a PIL Image object (RGB).
+    Returns:
+        tuple: A tuple containing:
+            - input_image_pil (PIL.Image.Image): The original input image.
+            - output_predictions_pil (PIL.Image.Image): The predicted segmentation map as a PIL Image.
     """
-    
-    # loading the model
+    print("Running DeepLabV3 MobileNetV3-Large prediction...")
+    # Load the model
     model = torch.hub.load('pytorch/vision:v0.10.0', 'deeplabv3_mobilenet_v3_large', pretrained=True)
+    model.to(device).eval() # Set model to evaluation mode and move to device
 
-    # setting the model to evaluation mode
-    model.eval()
-
-    # loading the input image
-    input_image = Image.open(image_path)
-
-    # converting the image to RGB
-    input_image = input_image.convert("RGB")
-
-    # set preprocessing for image
+    # Define preprocessing
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-    # preprocessing the input image
-    input_tensor = preprocess(input_image)
-    # adding the batch dimension
-    input_batch = input_tensor.unsqueeze(0)
+    # Preprocess the input PIL image
+    input_tensor = preprocess(input_image_pil)
+    input_batch = input_tensor.unsqueeze(0).to(device) # Add batch dimension and move to device
 
-    # checking if the GPU is available
-    if torch.cuda.is_available():
-        input_batch = input_batch.to('cuda')
-        model.to('cuda')
-
-    # predicting the output
+    # Perform inference
     with torch.no_grad():
-        output = model(input_batch)['out'][0]
-    
-    # getting the predictions
-    output_predictions = output.argmax(0)
+        output = model(input_batch)['out'][0] # Get output, remove batch dim
 
-    # returning the input image and the output predictions
-    return input_image , output_predictions
+    # Get class predictions
+    output_predictions = output.argmax(0) # Get the class index for each pixel
+
+    # Convert predictions tensor to PIL Image
+    output_predictions_np = output_predictions.byte().cpu().numpy() # Ensure uint8 for PIL
+    output_predictions_pil = Image.fromarray(output_predictions_np)
+
+    print("DeepLabV3 MobileNetV3-Large prediction finished.")
+    # Return the original input PIL and the output PIL prediction
+    return input_image_pil, output_predictions_pil
