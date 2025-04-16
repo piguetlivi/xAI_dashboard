@@ -16,6 +16,8 @@ from transformers import Mask2FormerImageProcessor
 from pytorch_grad_cam.utils.image import show_cam_on_image
 import numpy as np
 import cv2
+import collections
+import warnings
 from io import BytesIO
 
 # Check if GPU is available
@@ -213,16 +215,80 @@ def grad_cam(model, label, input_tensor, normalized_inp):
 def feature_ablation(model, label, input_tensor, normalized_inp):
     """
     Feature Ablation explanation using Captum.
+    MODIFIED: Uses a specific SCALAR AGGREGATION wrapper.
     """
+    print(f"Calculating Feature Ablation for class index: {label}...")
+    model.eval()
 
-    fa = FeatureAblation(model)
-    fa_attr = fa.attribute(normalized_inp, target=label, perturbations_per_eval=4)
+    # Convert label to int if it's not already
+    try:
+        target_label_int = int(label)
+    except ValueError:
+        print(f"Error: Invalid target label '{label}' for Feature Ablation.")
+        h, w = input_tensor.shape[-2:]
+        return Image.fromarray(np.zeros((h, w, 3), dtype=np.uint8))
 
-    heatmap = (fa_attr - fa_attr.min()) / (fa_attr.max() - fa_attr.min())
-    heatmap = heatmap.detach().cpu().numpy()[0, 0]
-    heatmap = cv2.resize(heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
 
-    result = show_cam_on_image(input_tensor.permute(1, 2, 0).cpu().numpy(), heatmap, use_rgb=True)
+    # --- SCALAR AGGREGATION Wrapper ---
+    # This wrapper calculates a scalar score for the *target* class.
+    # We sum the output logits/probabilities for the target class across all pixels.
+    def aggregate_output_for_target_class(inp):
+        model_output = model(inp)
+        output_tensor = get_segmentation_output(model_output) # Shape (N, C, H, W)
+        if target_label_int >= output_tensor.shape[1]:
+             print(f"Error: Target label index {target_label_int} is out of bounds for model output with {output_tensor.shape[1]} classes.")
+             # Return a tensor of zeros or raise error, prevents index error below
+             return torch.zeros(output_tensor.shape[0], device=output_tensor.device) # Return zero score per batch item
+
+        # Sum the output for the target class across spatial dimensions (H, W)
+        # Keep the batch dimension (N) -> Shape (N,)
+        score_per_batch_item = output_tensor[:, target_label_int, :, :].sum(dim=(1, 2))
+        #print(f"DEBUG FA Wrapper Score: {score_per_batch_item.item()}") # Debug print
+        return score_per_batch_item
+    # --- End Wrapper ---
+
+    # Initialize FeatureAblation with the SCALAR aggregation wrapper
+    fa = FeatureAblation(aggregate_output_for_target_class)
+
+    # Calculate attribution
+    try:
+        baselines = torch.zeros_like(normalized_inp)
+        # When the wrapper returns a scalar (per batch item), target is usually None or 0.
+        # Let's use target=None
+        fa_attr = fa.attribute(normalized_inp, baselines=baselines, target=None, perturbations_per_eval=4)
+        print(f"Raw FA Attr Stats: Min={fa_attr.min().item():.4f}, Max={fa_attr.max().item():.4f}, Mean={fa_attr.mean().item():.4f}")
+
+        # Check if attribution is effectively zero
+        if torch.abs(fa_attr).max() < 1e-6:
+             warnings.warn("Feature Ablation attribution map is nearly zero.")
+             h, w = input_tensor.shape[-2:]
+             return Image.fromarray(np.zeros((h, w, 3), dtype=np.uint8))
+
+    except Exception as e:
+        print(f"Error during Captum Feature Ablation calculation: {e}")
+        import traceback
+        traceback.print_exc()
+        h, w = input_tensor.shape[-2:]
+        return Image.fromarray(np.zeros((h, w, 3), dtype=np.uint8))
+
+    # --- Post-processing (Same as before, sum abs across channels) ---
+    fa_attr_processed = fa_attr.abs().sum(dim=1).squeeze(0)
+    heatmap_np = fa_attr_processed.cpu().detach().numpy()
+
+    min_val, max_val = np.min(heatmap_np), np.max(heatmap_np)
+    if max_val - min_val > 1e-6:
+        heatmap_normalized = (heatmap_np - min_val) / (max_val - min_val)
+    else:
+        print("Warning: Feature Ablation heatmap range is too small after processing.")
+        heatmap_normalized = np.zeros_like(heatmap_np)
+
+
+    heatmap_resized = cv2.resize(heatmap_normalized, (input_tensor.shape[2], input_tensor.shape[1]))
+    input_np = input_tensor.permute(1, 2, 0).cpu().numpy()
+    input_np = (input_np - np.min(input_np)) / (np.max(input_np) - np.min(input_np) + 1e-6)
+
+    result = show_cam_on_image(input_np, heatmap_resized, use_rgb=True)
+    print("Feature Ablation calculation finished.")
     return Image.fromarray(result)
 
 

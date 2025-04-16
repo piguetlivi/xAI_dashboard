@@ -564,25 +564,38 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         return html.P(f"Error loading data or preparing model input: Check logs.", style={'color': 'red'}), []
 
     # --- Run Selected XAI Method ---
-    explanation_np = None
-    explanation_display = html.P("Failed to generate explanation.", style={'color': 'red'}) # Default display on failure
+
+    explanation_np = None  # define early so it's available after the try
+
     try:
         xai_methods = {
             "gradcam": grad_cam, "saliency": saliency_maps, "lime": lime,
             "ablation": feature_ablation, "guided_gradcam": guided_grad_cam,
             "seg_gradcam": seg_grad_cam
         }
+
         if method_name not in xai_methods:
             raise ValueError(f"Invalid XAI method '{method_name}' selected.")
+        
+        if method_name in ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam'] and model_name == 'mask2former':
+            raise ValueError(f"{method_name} is not compatible with Mask2Former model.")
 
         explanation_pil = xai_methods[method_name](model, label_id, input_tensor, normalized_input_np)
 
         if explanation_pil is None:
             raise RuntimeError(f"XAI method '{method_name}' returned None.")
 
+        explanation_np = np.array(explanation_pil)  # assuming you convert it here later
         print(f"Generated explanation using '{method_name}'. Original PIL size: {explanation_pil.size}")
 
-        # --- MODIFICATION START: Resize Explanation PIL for Display ---
+    except ValueError as ve:
+        explanation_display = html.P(str(ve), style={'color': 'red'})
+
+    except Exception as e:
+        explanation_display = html.P("Failed to generate explanation.", style={'color': 'red'})
+
+
+        # Resize Explanation PIL for Display
         # Resize the explanation PIL image to match the original input image size
         # Use LANCZOS for high-quality downscaling/upscaling
         if explanation_pil.size != image_pil.size:
@@ -590,9 +603,7 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
             explanation_pil_resized_display = explanation_pil.resize(image_pil.size, Image.Resampling.LANCZOS)
         else:
             explanation_pil_resized_display = explanation_pil # No resize needed
-        # --- MODIFICATION END ---
-
-
+        
         # Convert the *original* (non-resized for display) explanation PIL to NumPy for metric calculation
         explanation_np = np.array(explanation_pil)
         print(f"Converted original explanation to NumPy array shape: {explanation_np.shape}")
