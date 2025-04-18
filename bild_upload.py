@@ -18,11 +18,11 @@ from methods import (
 )
 from models import (
     fcn_resnet50, fcn_resnet101,
-    deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large, mask2former_model
+    deeplabv3_resnet50, deeplabv3_resnet101, deeplabv3_mobilenetv3_large, mask2former_model_large, mask2former_model_small
 )
 from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
-    predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former
+    predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former_small, predict_mask2former_large
 )
 from labels import COCO_LABELS, CITYSCAPES_LABELS, COCO_COLOR_DICT, CITYSCAPES_COLOR_DICT, DEFAULT_COLOR
 
@@ -124,7 +124,8 @@ def dashboard_layout():
                         {'label': 'DeepLabV3 ResNet50', 'value': 'deeplabv3_resnet50'},
                         {'label': 'DeepLabV3 ResNet101', 'value': 'deeplabv3_resnet101'},
                         {'label': 'DeepLabV3 MobileNetV3-Large', 'value': 'deeplabv3_mobilenetv3_large'},
-                        {'label': 'Mask2Former', 'value': 'mask2former'}
+                        {'label': 'Mask2Former (small)', 'value': 'mask2former_model_small'},
+                        {'label': 'Mask2Former (large)', 'value': 'mask2former_model_large'}
                     ],
                     placeholder="3. Select model",
                     className="mb-2"
@@ -233,7 +234,8 @@ def process_image(contents, model_name, filename):
         'deeplabv3_resnet50': predict_deeplabv3_resnet50,
         'deeplabv3_resnet101': predict_deeplabv3_resnet101,
         'deeplabv3_mobilenetv3_large': predict_deeplabv3_mobilenetv3_large,
-        'mask2former': predict_mask2former
+        'mask2former_model_small': predict_mask2former_small, 
+        'mask2former_model_large': predict_mask2former_large
     }
     predictor = model_predictors.get(model_name)
     if predictor is None:
@@ -246,7 +248,7 @@ def process_image(contents, model_name, filename):
     try:
         # --- MODIFICATION START ---
         # Check if the predictor is for mask2former, which expects a file path
-        if model_name == 'mask2former':
+        if model_name == 'mask2former_model_small' or model_name == 'mask2former_model_large':
             # Save the PIL image to a temporary file
             temp_image_path = "temp_mask2former_input.png" # Use a specific name
             image.save(temp_image_path)
@@ -320,7 +322,7 @@ def process_image(contents, model_name, filename):
 
     # --- Prepare Label Dropdown Options ---
     # Select the appropriate color dictionary based on the model
-    if model_name == 'mask2former':
+    if model_name == 'mask2former_model_small' or model_name == 'mask2former_model_large':
         COLOR_DICT = CITYSCAPES_COLOR_DICT
         LABELS = CITYSCAPES_LABELS # For dropdown later
     else:
@@ -549,12 +551,13 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         model_loader = {
             'fcn_resnet50': fcn_resnet50, 'fcn_resnet101': fcn_resnet101,
             'deeplabv3_resnet50': deeplabv3_resnet50, 'deeplabv3_resnet101': deeplabv3_resnet101,
-            'deeplabv3_mobilenetv3_large': deeplabv3_mobilenetv3_large, 'mask2former': mask2former_model
+            'deeplabv3_mobilenetv3_large': deeplabv3_mobilenetv3_large, 'mask2former_model_small': mask2former_model_small, 
+            'mask2former_model_large': mask2former_model_large
         }
         if model_name not in model_loader:
             raise ValueError(f"Invalid model name '{model_name}' encountered.")
 
-        if model_name == 'mask2former':
+        if model_name == 'mask2former_model_small' or model_name == 'mask2former_model_large':
             model, processor = model_loader[model_name]()
         else:
             model = model_loader[model_name]()
@@ -596,8 +599,13 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         if method_name not in xai_methods:
             raise ValueError(f"Invalid XAI method '{method_name}' selected.")
 
-        if method_name in ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam'] and model_name == 'mask2former':
-            raise ValueError(f"{method_name} is not compatible with Mask2Former model.")
+        incompatible_methods = ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam']
+        mask2former_models = ['mask2former_model_small', 'mask2former_model_large']
+
+        if method_name in incompatible_methods and model_name in mask2former_models:
+            error_msg = f"Error: XAI method '{method_name}' is currently not compatible with Mask2Former models."
+            print(error_msg)
+            return html.P(error_msg, style={"color": "red", "textAlign": "center"}), []
 
         explanation_pil = xai_methods[method_name](model, label_id, input_tensor, normalized_input_np)
 

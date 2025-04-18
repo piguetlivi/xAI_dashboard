@@ -9,15 +9,24 @@ from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImagePr
 # Check if GPU is available
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-def mask2former_model():
+def mask2former_model_small():
     ''' 
-    Function to load the Mask2Former model from Hugging Face
+    Function to load the Mask2Former model (small version) from Hugging Face
     '''
     processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-small-cityscapes-semantic")
     model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-small-cityscapes-semantic")
     model.eval()
     return model, processor
 
+
+def mask2former_model_large():
+    """
+    Function to load the Mask2Former model (large version) from Hugging Face
+    """
+    processor = Mask2FormerImageProcessor.from_pretrained("facebook/mask2former-swin-large-cityscapes-semantic")
+    model = Mask2FormerForUniversalSegmentation.from_pretrained("facebook/mask2former-swin-large-cityscapes-semantic")
+    model.eval()
+    return model, processor
 
 def fcn_resnet50():
     '''

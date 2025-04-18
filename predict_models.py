@@ -10,21 +10,21 @@ import torch.optim as optim
 import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image
-from models import mask2former_model
+from models import mask2former_model_large, mask2former_model_small
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Function to predict the output of the image using the Mask2Former model.
-def predict_mask2former(image_path, task="semantic"):
+def predict_mask2former_small(image_path, task="semantic"):
     
     """
-    Function to predict the output of the image using the Mask2Former model.
+    Function to predict the output of the image using the Mask2Former model (small).
     """
 
     input_image = Image.open(image_path).convert("RGB")
 
     # Load model and processor
-    model, processor = mask2former_model()
+    model, processor = mask2former_model_small()
 
     inputs = processor(images=input_image, task_inputs=[task], return_tensors="pt")
     inputs = {k: v.to(device) for k, v in inputs.items()}
@@ -37,6 +37,29 @@ def predict_mask2former(image_path, task="semantic"):
     processed = processor.post_process_semantic_segmentation(outputs, target_sizes=[target_size])[0]  # single image
 
     return input_image, processed
+
+def predict_mask2former_large(image_path, task="semantic"):
+        
+        """
+        Function to predict the output of the image using the Mask2Former model (large).
+        """
+    
+        input_image = Image.open(image_path).convert("RGB")
+    
+        # Load model and processor
+        model, processor = mask2former_model_large()
+    
+        inputs = processor(images=input_image, task_inputs=[task], return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+    
+        with torch.no_grad():
+            outputs = model(**inputs)
+    
+        # Use Hugging Face processor to get final semantic segmentation map
+        target_size = input_image.size[::-1]  # (height, width)
+        processed = processor.post_process_semantic_segmentation(outputs, target_sizes=[target_size])[0]  # single image
+    
+        return input_image, processed
 
 
 # Function to predict the output of the image using the FCN Resnet101 model.
