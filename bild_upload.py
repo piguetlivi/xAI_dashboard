@@ -24,7 +24,7 @@ from predict_models import (
     predict_fcn_resnet50, predict_fcn_resnet101, predict_deeplabv3_resnet50,
     predict_deeplabv3_resnet101, predict_deeplabv3_mobilenetv3_large, predict_mask2former_small, predict_mask2former_large
 )
-from labels import COCO_LABELS, CITYSCAPES_LABELS, COCO_COLOR_DICT, CITYSCAPES_COLOR_DICT, DEFAULT_COLOR
+from labels import COCO_LABELS, CITYSCAPES_LABELS, COCO_COLOR_DICT, CITYSCAPES_COLOR_DICT, ADE20K_COLOR_DICT, ADE20K_LABELS, DEFAULT_COLOR
 
 # Import metric calculation functions from metrics.py
 from metrics import (
@@ -322,9 +322,13 @@ def process_image(contents, model_name, filename):
 
     # --- Prepare Label Dropdown Options ---
     # Select the appropriate color dictionary based on the model
-    if model_name == 'mask2former_model_small' or model_name == 'mask2former_model_large':
+    if model_name == 'mask2former_model_small':
         COLOR_DICT = CITYSCAPES_COLOR_DICT
         LABELS = CITYSCAPES_LABELS # For dropdown later
+
+    elif model_name == 'mask2former_model_large':
+        COLOR_DICT = ADE20K_COLOR_DICT
+        LABELS = ADE20K_LABELS # For dropdown later
     else:
         COLOR_DICT = COCO_COLOR_DICT
         LABELS = COCO_LABELS # For dropdown later
@@ -388,7 +392,7 @@ def process_image(contents, model_name, filename):
         if 0 <= label_id_int < len(LABELS):
             label_name = LABELS[label_id_int]
             # Provide a clear name, handling COCO background specifically
-            if model_name != 'mask2former' and label_id_int == 0 and label_name == '__background__':
+            if model_name != 'mask2former_model_small' and label_id_int == 0 and label_name == '__background__':
                  display_text = f"{label_id_int}: Background"
             else:
                  display_text = f"{label_id_int}: {label_name}"
