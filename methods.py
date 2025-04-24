@@ -6,18 +6,19 @@
 from torchvision import transforms
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 import matplotlib
 matplotlib.use("Agg")  # Use non-interactive backend for dashboard
 import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 from PIL import Image
-from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedBackprop
+from captum.attr import LayerGradCam, FeatureAblation, Saliency, Lime, GuidedGradCam
 from transformers import Mask2FormerImageProcessor
 from pytorch_grad_cam.utils.image import show_cam_on_image
 import numpy as np
 import cv2
-import collections
 import warnings
+from collections import OrderedDict
 from io import BytesIO
 
 # Check if GPU is available
@@ -60,6 +61,84 @@ def get_segmentation_output(model_output):
         print("DEBUG: model_output keys/attributes:", dir(model_output))
 
         raise ValueError("Unknown segmentation output format from model.")
+    
+# Visualization Function
+# It takes a numpy image (H, W, C) [0, 255] uint8 and a numpy heatmap (H, W) [0, 1] float
+# and returns an overlayed image as a numpy array (H, W, C) uint8.
+def show_cam_on_image(img: np.ndarray, mask: np.ndarray, use_rgb: bool = False, colormap=cv2.COLORMAP_JET) -> np.ndarray:
+    """ Overlays the heatmap onto the image. """
+    # Ensure mask is float [0, 1]
+    mask = cv2.normalize(mask, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    heatmap = cv2.applyColorMap(np.uint8(255 * mask), colormap)
+    if use_rgb:
+        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    heatmap = np.float32(heatmap) / 255
+    
+    # Ensure image is float [0, 1] if it's not already
+    if img.dtype == np.uint8:
+        img_float = np.float32(img) / 255
+    else:
+        img_float = img
+
+    cam = heatmap + img_float
+    cam = cam / np.max(cam)
+    return np.uint8(255 * cam)
+
+class SegmentationModelWrapper(nn.Module):
+    """
+    Wraps a segmentation model to ensure its forward method returns a single tensor,
+    handling potential dictionary outputs (like OrderedDict{'out': tensor}).
+    This is necessary for compatibility with Captum's gradient-based attribution methods.
+    """
+    def __init__(self, model):
+        """
+        Args:
+            model (nn.Module): The original segmentation model.
+        """
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        """
+        Performs a forward pass using the original model and extracts the primary output tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: The main output tensor (usually segmentation logits or probabilities).
+        """
+        output = self.model(x)
+
+        # Handle Hugging Face model outputs (e.g., Mask2Former)
+        if hasattr(output, "sem_seg"): # Specific attribute for semantic segmentation logits
+             # Check if sem_seg is already a tensor, otherwise try to access logits if nested
+            if isinstance(output.sem_seg, torch.Tensor):
+                 return output.sem_seg
+            # Add checks here if sem_seg itself is an object with logits, e.g. output.sem_seg.logits
+
+        # Handle common dictionary outputs (e.g., torchvision)
+        elif isinstance(output, (OrderedDict, dict)):
+            if 'out' in output:
+                return output['out'] # Common key for torchvision segmentation models
+            elif 'logits' in output: # Another possible key
+                 return output['logits']
+            else:
+                # Attempt to find a likely tensor output if common keys fail
+                for key, value in output.items():
+                    if isinstance(value, torch.Tensor) and value.ndim >= 3: # Check if it looks like segmentation output
+                        print(f"Warning: Using fallback key '{key}' from model output dictionary.")
+                        return value
+                raise KeyError("Could not automatically find the segmentation output tensor in the model's output dictionary. Common keys 'out' or 'logits' not found.")
+
+        # Handle cases where the model might already return a tensor directly
+        elif isinstance(output, torch.Tensor):
+            return output
+
+        # If output format is unknown
+        else:
+            raise TypeError(f"Unsupported model output type: {type(output)}. Expected Tensor, dict, OrderedDict, or object with .sem_seg attribute.")
+
 
 # -------------------------------------------
 # XAI Methods
@@ -340,35 +419,92 @@ def lime(model, label, input_tensor, normalized_inp):
     return Image.fromarray(result)
 
 
-def guided_grad_cam(model, label, input_tensor, normalized_inp):
+def guided_grad_cam(original_model, target_layer, label, input_tensor, normalized_inp):
     """
-    Guided Grad-CAM explanation: combines Guided Backpropagation and Grad-CAM.
+    Generates Guided Grad-CAM explanation for a segmentation model using Captum's class.
+
+    Args:
+        original_model (nn.Module): The original PyTorch segmentation model.
+        target_layer (nn.Module): The specific layer within the *original_model* for which
+                                   Grad-CAM attributions are computed (e.g., the last conv layer).
+                                   YOU MUST IDENTIFY AND PROVIDE THIS LAYER.
+        label (int): The target class ID for the explanation.
+        input_tensor (torch.Tensor): The original input tensor (e.g., unnormalized, CHW or HWC).
+                                     Used for visualization and getting shape info.
+                                     Should be on the same device as the model expects input.
+        normalized_inp (torch.Tensor): The preprocessed (normalized, resized) input tensor
+                                       ready to be fed into the model (N, C, H, W).
+                                       Must be on the correct device.
+
+    Returns:
+        PIL.Image or None: A PIL Image object containing the explanation overlayed on the
+                           original image, or None if attribution fails.
     """
+    # Ensure the original model is in evaluation mode
+    original_model.eval()
 
-    out = get_segmentation_output(model(normalized_inp))
-    out_max = torch.argmax(out, dim=1, keepdim=True)
+    # 1. Wrap the model to handle dictionary outputs
+    wrapped_model = SegmentationModelWrapper(original_model)
+    wrapped_model.eval() # Also set the wrapper to eval mode
 
-    def wrapper(inp):
-        out = get_segmentation_output(model(inp))
-        selected_inds = torch.zeros_like(out[0:1]).scatter_(1, out_max, 1)
-        return (out * selected_inds).sum(dim=(2, 3))
+    # 2. Initialize GuidedGradCam
+    # Pass the wrapped_model (which returns a tensor) and the target_layer from the original_model.
+    # Captum will find the target_layer within the wrapped_model's structure.
+    guided_gc = GuidedGradCam(wrapped_model, target_layer)
 
-    # Grad-CAM part
-    layer_gc = LayerGradCam(wrapper, model.classifier)
-    gc_attr = layer_gc.attribute(normalized_inp, target=label)
-    gc_attr = (gc_attr - gc_attr.min()) / (gc_attr.max() - gc_attr.min())
-    heatmap = gc_attr.detach().cpu().numpy()[0, 0]
-    heatmap = cv2.resize(heatmap, (input_tensor.shape[2], input_tensor.shape[1]))
+    # 3. Ensure the input tensor requires gradients for attribution
+    if not normalized_inp.requires_grad:
+         normalized_inp.requires_grad_()
 
-    # Guided Backpropagation part
-    gbp = GuidedBackprop(model)
-    guided_attr = gbp.attribute(normalized_inp, target=label)
-    guided_attr = guided_attr.detach().cpu().numpy()[0].transpose(1, 2, 0)
+    # 4. Compute Guided Grad-CAM attribution
+    # target=label: For segmentation, this typically computes the gradient of the sum
+    #               of the logits/scores for the target class 'label' across all spatial locations.
+    # interpolate_mode='bilinear': Recommended by the Grad-CAM paper for smoother results.
+    #                              Captum handles upsampling the Grad-CAM part automatically.
+    attribution = guided_gc.attribute(normalized_inp, target=label, interpolate_mode='bilinear')
 
-    # Combine both
-    guided_gradcam = guided_attr * heatmap[..., np.newaxis]
-    guided_gradcam = (guided_gradcam - guided_gradcam.min()) / (guided_gradcam.max() - guided_gradcam.min())
+    # Check if attribution calculation was successful
+    if attribution is None:
+        print("Warning: GuidedGradCam attribution returned None. "
+              "This might happen if interpolation failed (e.g., incompatible dimensions).")
+        return None
 
-    result = show_cam_on_image(input_tensor.permute(1, 2, 0).cpu().numpy(), guided_gradcam, use_rgb=True)
-    return Image.fromarray(result)
+    # 5. Process attribution for visualization
+    # The attribution tensor has the same shape as normalized_inp (N, C, H_in, W_in).
+    # We usually want a 2D heatmap for visualization.
+    # Squeeze the batch dimension (assuming batch size N=1).
+    # Take the absolute value and sum across the color channels (dim=0) to get a single heatmap (H_in, W_in).
+    heatmap_tensor = attribution.squeeze(0).abs().sum(dim=0)
+    heatmap = heatmap_tensor.cpu().detach().numpy() # Move to CPU and convert to numpy
 
+    # 6. Normalize the heatmap to the [0, 1] range for visualization
+    heatmap_min, heatmap_max = heatmap.min(), heatmap.max()
+    if heatmap_max - heatmap_min > 1e-8: # Avoid division by zero if heatmap is constant
+        heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+    else:
+        heatmap = np.zeros_like(heatmap) # Set to zero if constant
+
+    # 7. Prepare the original image for overlay
+    # Remove batch dimension if present, permute channels to (H, W, C) for numpy/cv2, move to CPU.
+    img_np = input_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy()
+
+    # Convert image to uint8 [0, 255] if it's not already (e.g., if it's float [0, 1])
+    if img_np.dtype != np.uint8:
+        if img_np.max() <= 1.0 and img_np.min() >= 0.0:
+            img_np = (img_np * 255).astype(np.uint8)
+        else:
+            # If it's in another range (e.g., float [-1, 1]), adjust accordingly
+            # This basic conversion assumes [0, 1] float or already uint8
+            img_np = img_np.astype(np.uint8) # Fallback, might need adjustment
+
+    # 8. Overlay the heatmap on the image using the helper function
+    # Ensure the heatmap has the same H, W dimensions as the img_np expects.
+    # show_cam_on_image usually expects (H, W) heatmap and (H, W, C) image.
+    # Resize heatmap if necessary (though GuidedGradCam output should match input size)
+    if heatmap.shape != img_np.shape[:2]:
+         heatmap = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
+
+    result_np = show_cam_on_image(img_np, heatmap, use_rgb=True) # Assuming show_cam_on_image handles RGB conversion
+
+    # 9. Convert the final numpy array result to a PIL Image
+    return Image.fromarray(result_np)

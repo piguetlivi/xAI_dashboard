@@ -11,6 +11,7 @@ import io
 import numpy as np
 from PIL import Image
 import torch
+import traceback 
 import cv2
 from methods import (
     prepare_input,
@@ -516,7 +517,7 @@ def process_ground_truth_mask(contents, filename):
 def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model_name, stored_pred_data, stored_gt_data):
     """
     Runs the selected XAI method for the chosen model and target label.
-    Calculates the selected metrics, using the Ground Truth mask if available for Pointing Game.
+    Calculates the selected metrics, using the Ground Truth mask if available.
     Updates the explanation heatmap display and the metrics results area.
     """
     # Log input states for debugging
@@ -533,275 +534,318 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
         if not contents: missing.append("uploaded image")
         if not model_name: missing.append("model")
         if label_id is None: missing.append("target label")
-        if stored_pred_data is None: missing.append("stored prediction data")
+        if stored_pred_data is None: missing.append("stored prediction data (run prediction first)")
         message = f"Please select/provide: {', '.join(missing)}."
         print(f"run_xai_and_metrics: Aborting - {message}")
-        return (html.P("Explanation requires image, model, method, and label.", style={'textAlign': 'center'}),
+        # Return default messages for both outputs
+        return (html.P(message, style={'textAlign': 'center', 'color': 'orange'}),
                 html.P("Select metrics to calculate.", style={'textAlign': 'center'}))
 
-    # --- Load Data and Model ---
+    # Initialize outputs
+    explanation_display = html.P("Generating explanation...", style={"textAlign": "center"})
+    metrics_output = []
+    explanation_np = None # Will store the numpy array of the explanation if successful
+
     try:
+        # --- Load Data ---
         input_np = np.array(stored_pred_data['input_np'], dtype=np.uint8)
-        predicted_segmentation_map = np.array(stored_pred_data['predicted_segmentation_map'])
-        print(f"Loaded input_np shape: {input_np.shape}, predicted_map shape: {predicted_segmentation_map.shape}")
+        # predicted_segmentation_map = np.array(stored_pred_data['predicted_segmentation_map']) # Not directly needed here, but good to know it exists
+        print(f"Loaded input_np shape: {input_np.shape}")
 
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         image_pil = Image.open(io.BytesIO(decoded)).convert("RGB")
-        target_size_hw = image_pil.size[::-1] # Get target (H, W) from original image
-        print(f"Target display size (HxW): {target_size_hw}")
+        print(f"Loaded original PIL image size (WxH): {image_pil.size}")
 
-
+        # --- Load Model ---
         model_loader = {
             'fcn_resnet50': fcn_resnet50, 'fcn_resnet101': fcn_resnet101,
             'deeplabv3_resnet50': deeplabv3_resnet50, 'deeplabv3_resnet101': deeplabv3_resnet101,
-            'deeplabv3_mobilenetv3_large': deeplabv3_mobilenetv3_large, 'mask2former_model_small': mask2former_model_small, 
+            'deeplabv3_mobilenetv3_large': deeplabv3_mobilenetv3_large,
+            'mask2former_model_small': mask2former_model_small,
             'mask2former_model_large': mask2former_model_large
         }
         if model_name not in model_loader:
             raise ValueError(f"Invalid model name '{model_name}' encountered.")
 
-        if model_name == 'mask2former_model_small' or model_name == 'mask2former_model_large':
-            model, processor = model_loader[model_name]()
+        # Handle Mask2Former loading potentially returning model and processor
+        loaded_model_or_tuple = model_loader[model_name]()
+        if isinstance(loaded_model_or_tuple, tuple):
+            model = loaded_model_or_tuple[0]
+            # processor = loaded_model_or_tuple[1] # Processor might not be needed here
         else:
-            model = model_loader[model_name]()
+            model = loaded_model_or_tuple
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device).eval()
         print(f"Loaded model '{model_name}' on device '{device}'.")
 
-        # Save temporary file for prepare_input
+        # --- Prepare Model Input ---
+        # Save temporary file needed by prepare_input if it expects a path
         temp_prep_input_path = "temp_prepare_input.png"
         image_pil.save(temp_prep_input_path)
         print(f"Saved temporary image for prepare_input at {temp_prep_input_path}")
 
-        input_tensor, normalized_input_np = prepare_input(temp_prep_input_path) # Pass the path
+        # Assuming prepare_input returns: processed tensor for model, normalized numpy array
+        input_tensor, normalized_input_np = prepare_input(temp_prep_input_path)
         input_tensor = input_tensor.to(device)
         print(f"Prepared input tensor shape: {input_tensor.shape}")
+        # Optional: Clean up temporary file
+        # import os; try: os.remove(temp_prep_input_path) except OSError: pass
 
-        # Optional: Clean up temporary file for prepare_input
-        # import os
-        # try: os.remove(temp_prep_input_path) ... except ...
 
-    except Exception as e:
-        print(f"Error during data/model loading or preparation: {e}")
-        import traceback
-        traceback.print_exc()
-        return html.P(f"Error loading data or preparing model input: Check logs.", style={'color': 'red'}), []
-
-    # --- Run Selected XAI Method ---
-
-    explanation_display = html.P("Explanation could not be generated.", style={"color": "red"})
-
-    try:
+        # --- Define XAI Methods Mapping ---
+        # Make sure the function names here match your imports and definitions
         xai_methods = {
-            "gradcam": grad_cam, "saliency": saliency_maps, "lime": lime,
-            "ablation": feature_ablation, "guided_gradcam": guided_grad_cam,
+            "gradcam": grad_cam,
+            "saliency": saliency_maps,
+            "lime": lime,
+            "ablation": feature_ablation,
+            "guided_gradcam": guided_grad_cam, # Assumes this is your corrected captum version
             "seg_gradcam": seg_grad_cam
         }
-
         if method_name not in xai_methods:
-            raise ValueError(f"Invalid XAI method '{method_name}' selected.")
+             raise ValueError(f"XAI method '{method_name}' is not defined in the methods mapping.")
 
-        incompatible_methods = ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam']
+        # --- Determine Target Layer (Conditionally for Guided Grad-CAM) ---
+        target_layer = None
+        if method_name == 'guided_gradcam':
+            print(f"Finding target layer for Guided Grad-CAM and model '{model_name}'...")
+            try:
+                # Define target layers based on known model structures
+                if model_name in ['fcn_resnet50', 'fcn_resnet101', 'deeplabv3_resnet50', 'deeplabv3_resnet101']:
+                    target_layer = model.backbone.layer4[-1] # Last block of ResNet backbone
+                elif model_name == 'deeplabv3_mobilenetv3_large':
+                    # Inspect model structure (e.g., print(model)) to find the correct path
+                    # Example: Might be the last conv block in the 'features' part
+                    target_layer = model.backbone[-1][-1] # Placeholder - ADJUST THIS PATH!
+                # Add elif clauses for other models supporting Guided Grad-CAM
+
+                # Check if layer was found for compatible models
+                mask2former_models = ['mask2former_model_small', 'mask2former_model_large'] # M2F incompatible check later
+                if target_layer is None and model_name not in mask2former_models:
+                    raise ValueError(f"Target layer configuration missing for Guided Grad-CAM with model '{model_name}'.")
+                elif target_layer is not None:
+                    print(f"Identified target_layer for Guided Grad-CAM: {type(target_layer)}")
+
+            except AttributeError as ae:
+                print(f"Error accessing expected structure to find target layer for {model_name}: {ae}")
+                raise ValueError(f"Could not find target layer for Guided Grad-CAM in model '{model_name}'. Check model structure and layer path definition.") from ae
+            except ValueError as ve:
+                raise ve # Re-raise config missing error
+
+        # --- Check Method/Model Compatibility (e.g., Mask2Former) ---
+        # Define methods known to be incompatible with M2F in this setup
+        incompatible_methods_m2f = ['gradcam', 'saliency', 'lime', 'ablation', 'guided_gradcam']
         mask2former_models = ['mask2former_model_small', 'mask2former_model_large']
+        if method_name in incompatible_methods_m2f and model_name in mask2former_models:
+            raise ValueError(f"XAI method '{method_name}' is currently not compatible with Mask2Former models.")
 
-        if method_name in incompatible_methods and model_name in mask2former_models:
-            error_msg = f"Error: XAI method '{method_name}' is currently not compatible with Mask2Former models."
-            print(error_msg)
-            return html.P(error_msg, style={"color": "red", "textAlign": "center"}), []
+        # --- Select and Run the XAI Method ---
+        print(f"Running XAI method: {method_name}")
+        explanation_pil = None # Initialize
 
-        explanation_pil = xai_methods[method_name](model, label_id, input_tensor, normalized_input_np)
+        if method_name == 'guided_gradcam':
+            if target_layer is None: # Should have been caught above, but double-check
+                 raise ValueError("Target layer required for Guided Grad-CAM but was not identified.")
 
+            # Prepare the *original* image tensor (CPU, CHW, float [0,1]) needed by guided_grad_cam
+            if input_np is None: raise ValueError("Original image numpy array (input_np) is missing for Guided Grad-CAM.")
+            # Convert HWC uint8 [0,255] to NCHW float [0,1]
+            original_input_tensor_cpu = torch.from_numpy(input_np).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+
+            # Call the specific guided_grad_cam function
+            explanation_pil = guided_grad_cam( # Ensure this is the correct imported function name
+                original_model=model,
+                target_layer=target_layer,
+                label=label_id,
+                input_tensor=original_input_tensor_cpu, # Original image tensor (CPU)
+                normalized_inp=input_tensor           # Processed tensor for model (on device)
+            )
+        else:
+            # Call other methods using the dictionary lookup
+            # Assuming they expect: model, label, processed_tensor, normalized_numpy_array
+            explanation_pil = xai_methods[method_name](
+                model=model,
+                label=label_id,
+                input_tensor=input_tensor,         # Processed tensor (on device)
+                normalized_inp=normalized_input_np # Numpy version (verify if needed by methods)
+            )
+
+        # --- Check if the method execution failed silently ---
         if explanation_pil is None:
-            raise RuntimeError(f"XAI method '{method_name}' returned None.")
+            raise RuntimeError(f"XAI method '{method_name}' did not return a result (returned None).")
 
+        print(f"XAI method '{method_name}' executed successfully.")
+
+        # --- If successful, process explanation for display and metrics ---
+        # 1. Convert to NumPy (original size) - needed for metrics
         explanation_np = np.array(explanation_pil)
-        # Convert to displayable HTML if successful
-        buffer = io.BytesIO()
-        explanation_pil.save(buffer, format="PNG")
-        encoded_image = base64.b64encode(buffer.getvalue()).decode()
-        explanation_display = html.Img(
-            src=f"data:image/png;base64,{encoded_explanation}",
-            style={"maxWidth": "100%", "maxHeight": "380px", "display": "block", "margin": "0 auto"}
-        )
+        print(f"Converted explanation PIL to NumPy array, shape: {explanation_np.shape}")
 
-    except (ValueError, RuntimeError) as err:
-        explanation_display = html.P(str(err), style={"color": "red"})
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        explanation_display = html.P(f"Unexpected error: {str(e)}", style={"color": "red"})
-
-
-        # Resize Explanation PIL for Display
-        # Resize the explanation PIL image to match the original input image size
-        # Use LANCZOS for high-quality downscaling/upscaling
+        # 2. Resize Explanation PIL *only for display* to match original image size
         if explanation_pil.size != image_pil.size:
             print(f"Resizing explanation from {explanation_pil.size} to {image_pil.size} for display.")
             explanation_pil_resized_display = explanation_pil.resize(image_pil.size, Image.Resampling.LANCZOS)
         else:
             explanation_pil_resized_display = explanation_pil # No resize needed
-        
-        # Convert the *original* (non-resized for display) explanation PIL to NumPy for metric calculation
-        explanation_np = np.array(explanation_pil)
-        print(f"Converted original explanation to NumPy array shape: {explanation_np.shape}")
 
-
-        # Encode the *resized for display* explanation for the html.Img tag
+        # 3. Encode the *resized for display* explanation for the html.Img tag
         buffer = io.BytesIO()
         explanation_pil_resized_display.save(buffer, format="PNG")
         encoded_explanation = base64.b64encode(buffer.getvalue()).decode()
-        # Update the display component
+
+        # 4. Update the display component
         explanation_display = html.Img(
             src=f"data:image/png;base64,{encoded_explanation}",
             style={"maxWidth": "100%", "maxHeight": "380px", "display": "block", "margin": "0 auto"}
         )
 
-    except Exception as e:
-        print(f"Error running XAI method '{method_name}': {e}")
-        import traceback
-        traceback.print_exc()
-        # Keep the default error display defined before the try block
+    # --- Catch errors during XAI execution or preparation ---
+    except (ValueError, RuntimeError, AttributeError, KeyError) as err: # Catch config/runtime/lookup errors
+        error_msg = f"Error during XAI setup or execution ({method_name}): {err}"
+        print(error_msg)
+        traceback.print_exc() # Print traceback for these specific errors
+        explanation_display = html.P(error_msg, style={"color": "red", "textAlign": "center"})
+        explanation_np = None # Ensure numpy explanation is None if XAI failed
 
+    except Exception as e: # Catch any other unexpected errors
+        error_msg = f"Unexpected error during XAI execution for '{method_name}': {e}"
+        print(error_msg)
+        traceback.print_exc()
+        explanation_display = html.P(error_msg, style={"color": "red", "textAlign": "center"})
+        explanation_np = None # Ensure numpy explanation is None
 
     # --- Calculate Selected Metrics ---
-    metrics_output = []
-    heatmap_resized_metrics = None # Use a different name for clarity
+    print(f"Calculating selected metrics: {selected_metrics}")
+    heatmap_resized_metrics = None # Initialize heatmap used for metrics
 
+    # Proceed only if metrics are selected AND the explanation was generated successfully
     if selected_metrics and explanation_np is not None:
         try:
-            # --- Prepare Heatmap for METRICS (Grayscale + Resize to INPUT size) ---
-            # Use the original explanation_np before display resizing
+            # --- Prepare Heatmap for METRICS (Grayscale + Resize to match Original INPUT size) ---
+            print("Preparing heatmap for metrics calculation...")
+            # Use the original explanation_np (before display resizing)
             if explanation_np.ndim == 3 and explanation_np.shape[2] in [3, 4]:
-                if explanation_np.shape[2] == 4:
+                # Convert color heatmap to grayscale
+                if explanation_np.shape[2] == 4: # RGBA
                     heatmap_gray = cv2.cvtColor(explanation_np, cv2.COLOR_RGBA2GRAY)
-                else:
+                else: # RGB
                     heatmap_gray = cv2.cvtColor(explanation_np, cv2.COLOR_RGB2GRAY)
             elif explanation_np.ndim == 2:
+                # Already grayscale
                 heatmap_gray = explanation_np
             else:
-                raise ValueError(f"Unexpected explanation shape for heatmap conversion: {explanation_np.shape}")
+                raise ValueError(f"Unexpected explanation NumPy array shape for heatmap conversion: {explanation_np.shape}")
 
-            H, W = input_np.shape[:2] # Target shape from input image
-            # Resize the grayscale heatmap specifically for metric calculations
+            # Target shape for metrics (H, W) from the original input image numpy array
+            H, W = input_np.shape[:2]
+            # Resize the grayscale heatmap specifically for metric calculations to match input H, W
             heatmap_resized_metrics = cv2.resize(heatmap_gray.astype(np.float32), (W, H), interpolation=cv2.INTER_LINEAR)
-            print(f"Metrics Prep: Resized heatmap for metrics to ({H}, {W}).")
+            # Normalize metrics heatmap to [0, 1] range - often required by metric functions
+            min_val, max_val = heatmap_resized_metrics.min(), heatmap_resized_metrics.max()
+            if max_val - min_val > 1e-8:
+                 heatmap_resized_metrics = (heatmap_resized_metrics - min_val) / (max_val - min_val)
+            else:
+                 heatmap_resized_metrics = np.zeros_like(heatmap_resized_metrics) # Avoid division by zero
+
+            print(f"Metrics Prep: Resized grayscale heatmap for metrics to ({H}, {W}) and normalized.")
 
 
             # --- Execute Selected Metric Calculations ---
-            # Ensure we pass heatmap_resized_metrics to metric functions
 
-             # --- Intersection over Union (IoU) Metric ---
+            # Intersection over Union (IoU) Metric
             if 'iou' in selected_metrics:
-                # Check if we have both the explanation heatmap and the GT mask
-                if heatmap_resized_metrics is not None and stored_gt_data and 'gt_mask' in stored_gt_data:
-                    try:
-                        # Load the binarized GT mask from store
-                        gt_mask_np = np.array(stored_gt_data['gt_mask'], dtype=np.uint8)
-
-                        # Check if mask dimensions match heatmap dimensions (already done for PG, but good practice)
-                        if gt_mask_np.shape == heatmap_resized_metrics.shape:
-                            # Calculate IoU (using default threshold 0.5 after normalization)
-                            iou_score = calculate_iou(
-                                explanation_hw=heatmap_resized_metrics, # HW float heatmap for metrics
-                                gt_mask_hw=gt_mask_np              # HW uint8 binary GT mask
-                                # explanation_threshold=0.5        # Override default if needed
-                            )
-                            metrics_output.append(html.P(f"IoU (Expl vs GT): {iou_score:.4f}"))
-                        else:
-                            # Dimension mismatch error
-                            error_msg = (f"IoU Error: GT mask shape {gt_mask_np.shape} "
-                                        f"does not match metrics heatmap shape {heatmap_resized_metrics.shape}.")
-                            metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                            print(error_msg)
-
-                    except Exception as e:
-                        # Error during IoU calculation
-                        error_msg = f"IoU Calculation Error: {e}"
-                        metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                        print(error_msg)
-                        import traceback; traceback.print_exc()
-                else:
-                    # Explanation or GT mask was missing
-                    if heatmap_resized_metrics is None:
-                        error_msg = "IoU Skipped: Explanation heatmap not generated."
-                    else:
-                        error_msg = "IoU Skipped: Ground Truth Mask not uploaded or invalid."
-                    metrics_output.append(html.P(error_msg, style={'color': 'orange'}))
-                    print(error_msg)          
-
-            # --- Pointing Game Metric (using Ground Truth) ---
-            if 'pointing_game' in selected_metrics:
-                gt_mask_np = None
+                iou_score = "N/A" # Default value
                 if stored_gt_data and 'gt_mask' in stored_gt_data:
                     try:
                         gt_mask_np = np.array(stored_gt_data['gt_mask'], dtype=np.uint8)
-                        print(f"Loaded GT mask for Pointing Game, shape: {gt_mask_np.shape}")
-                        # Use heatmap_resized_metrics here for shape comparison
-                        if gt_mask_np.shape == heatmap_resized_metrics.shape:
-                            pg_score = calculate_pointing_game_quantus(
-                                heatmap=heatmap_resized_metrics, # Use metrics heatmap
-                                segmentation_mask=gt_mask_np, input_image=input_np,
-                                model=model, device=device, label_id=int(label_id) if label_id is not None else None,
-                                disable_warnings=True
+                        if gt_mask_np.shape == heatmap_resized_metrics.shape[:2]: # Compare H,W
+                            iou_score = calculate_iou(
+                                explanation_hw=heatmap_resized_metrics, # HW float heatmap [0,1]
+                                gt_mask_hw=gt_mask_np              # HW uint8 binary GT mask
                             )
-                            metrics_output.append(html.P(f"Pointing Game (vs GT): {pg_score:.4f}"))
-                            print(f"Calculated Pointing Game (vs GT): {pg_score:.4f}")
+                            iou_score = f"{iou_score:.4f}"
                         else:
-                            error_msg = (f"Pointing Game Error: GT mask shape {gt_mask_np.shape} "
-                                         f"does not match metrics heatmap shape {heatmap_resized_metrics.shape}.")
-                            metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                            print(error_msg)
+                            iou_score = f"Error: GT shape {gt_mask_np.shape} != Heatmap shape {heatmap_resized_metrics.shape[:2]}"
+                            print(iou_score)
                     except Exception as e:
-                        error_msg = f"Pointing Game Calculation Error (GT): {e}"
-                        metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                        print(error_msg)
+                        iou_score = f"Error: {e}"
+                        print(f"IoU Calculation Error: {e}")
+                        # traceback.print_exc() # Optional detailed traceback for IoU error
                 else:
-                    error_msg = "Pointing Game Skipped: Ground Truth Mask not uploaded or invalid."
-                    metrics_output.append(html.P(error_msg, style={'color': 'orange'}))
-                    print(error_msg)
-            # --- End Pointing Game ---
+                    iou_score = "GT Mask Missing"
+                metrics_output.append(html.P(f"IoU (Expl vs GT): {iou_score}"))
+
+            # Pointing Game Metric (using Ground Truth)
+            if 'pointing_game' in selected_metrics:
+                pg_score = "N/A"
+                if stored_gt_data and 'gt_mask' in stored_gt_data:
+                    try:
+                        gt_mask_np = np.array(stored_gt_data['gt_mask'], dtype=np.uint8)
+                        if gt_mask_np.shape == heatmap_resized_metrics.shape[:2]:
+                            # Assuming calculate_pointing_game_quantus handles normalization if needed
+                            pg_score = calculate_pointing_game_quantus(
+                                heatmap=heatmap_resized_metrics, # Pass the prepared metrics heatmap
+                                segmentation_mask=gt_mask_np,
+                                input_image=input_np, # Original numpy image might be needed by metric
+                                model=model,          # Pass the loaded model
+                                device=device,        # Pass the device
+                                label_id=int(label_id), # Pass the target label
+                                disable_warnings=True   # Optional: suppress quantus warnings
+                            )
+                            pg_score = f"{pg_score:.4f}"
+                        else:
+                            pg_score = f"Error: GT shape {gt_mask_np.shape} != Heatmap shape {heatmap_resized_metrics.shape[:2]}"
+                            print(pg_score)
+                    except Exception as e:
+                        pg_score = f"Error: {e}"
+                        print(f"Pointing Game Calculation Error (GT): {e}")
+                        # traceback.print_exc() # Optional detailed traceback for PG error
+                else:
+                    pg_score = "GT Mask Missing"
+                metrics_output.append(html.P(f"Pointing Game (vs GT): {pg_score}"))
 
             # Effective Complexity Metric
             if 'effective_complexity' in selected_metrics:
+                eff_comp_score = "N/A"
                 try:
+                     # Ensure device is torch.device object
                     eff_comp_device = device if isinstance(device, torch.device) else torch.device(str(device))
+                    # Assuming calculate_effective_complexity_quantus handles normalization if needed
                     eff_comp_score = calculate_effective_complexity_quantus(
-                        heatmap=heatmap_resized_metrics, # Use metrics heatmap
-                        model=model, input_image=input_np,
-                        label_id=int(label_id) if label_id is not None else None, device=eff_comp_device
+                        heatmap=heatmap_resized_metrics, # Pass the prepared metrics heatmap
+                        model=model,
+                        input_image=input_np,
+                        label_id=int(label_id),
+                        device=eff_comp_device
                     )
-                    metrics_output.append(html.P(f"Effective Complexity: {eff_comp_score:.4f}"))
-                    print(f"Calculated Effective Complexity: {eff_comp_score:.4f}")
+                    eff_comp_score = f"{eff_comp_score:.4f}"
                 except Exception as e:
-                    error_msg = f"Effective Complexity Calculation Error: {e}"
-                    metrics_output.append(html.P(error_msg, style={'color': 'red'}))
-                    print(error_msg)
+                    eff_comp_score = f"Error: {e}"
+                    print(f"Effective Complexity Calculation Error: {e}")
+                    # traceback.print_exc() # Optional detailed traceback for EC error
+                metrics_output.append(html.P(f"Effective Complexity: {eff_comp_score}"))
 
+        # Catch errors during metric *preparation* (resizing, grayscale)
         except Exception as prep_err:
-            # Handle errors during heatmap preparation (e.g., resize for metrics)
             error_msg = f"Error during metrics preparation: {prep_err}"
             metrics_output.append(html.P(error_msg, style={'color': 'red'}))
             print(error_msg)
+            traceback.print_exc() # Show traceback for prep errors
 
+    # Add messages if metrics selected but XAI failed, or no metrics selected
+    elif selected_metrics and explanation_np is None:
+        metrics_output.append(html.P("Metrics Skipped: Explanation generation failed.", style={'color': 'orange'}))
+    elif not selected_metrics:
+        metrics_output.append(html.P("No metrics selected."))
 
-    # --- Final Checks for Metrics Output ---
-    if not selected_metrics:
-        if not any('Error:' in str(p.children) for p in metrics_output if isinstance(p, html.P)):
-             metrics_output.append(html.P("No metrics selected."))
-    elif selected_metrics and not metrics_output:
-         metrics_output.append(html.P("Metrics calculation failed. Check preparation steps.", style={'color': 'red'}))
-    elif selected_metrics and not any(': ' in str(p.children) for p in metrics_output if isinstance(p, html.P)):
-         if not any('Error:' in str(p.children) or 'Skipped:' in str(p.children) for p in metrics_output if isinstance(p, html.P)):
-             metrics_output.append(html.P("Selected metrics failed. Check logs.", style={'color': 'red'}))
-
-    if not isinstance(metrics_output, list):
-        metrics_output = [metrics_output] if metrics_output else []
+    # Final check if metrics list is empty despite being selected (implies calculation errors)
+    if selected_metrics and not metrics_output:
+         metrics_output.append(html.P("Metrics calculation failed or produced no output. Check logs.", style={'color': 'red'}))
 
     print("--- run_xai_and_metrics finished. ---")
-    # Return the *potentially resized* explanation display and the list of metric results
+    # Return the explanation display (image or error message) and the list of metric results/errors
     return explanation_display, metrics_output
 
 # Entry point for running the Dash server
