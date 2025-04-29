@@ -614,12 +614,30 @@ def run_xai_and_metrics(method_name, label_id, selected_metrics, contents, model
             try:
                 # Define target layers based on known model structures
                 if model_name in ['fcn_resnet50', 'fcn_resnet101', 'deeplabv3_resnet50', 'deeplabv3_resnet101']:
-                    target_layer = model.backbone.layer4[-1] # Last block of ResNet backbone
+                    if hasattr(model, 'backbone') and hasattr(model.backbone, 'layer4'): 
+                        last_block_index_resnet = len(model.backbone.layer4) - 1
+                        target_layer = model.backbone.layer4[last_block_index_resnet]
+                    else:
+                         raise AttributeError("Model structure doesn't match expected ResNet backbone (missing layer4).")
+
                 elif model_name == 'deeplabv3_mobilenetv3_large':
-                    # Inspect model structure (e.g., print(model)) to find the correct path
-                    # Example: Might be the last conv block in the 'features' part
-                    target_layer = model.backbone[-1][-1] # Placeholder - ADJUST THIS PATH!
-                # Add elif clauses for other models supporting Guided Grad-CAM
+                    # For MobileNetV3 in torchvision's DeepLabV3, the backbone features are sequential.
+                    if hasattr(model, 'backbone') and isinstance(model.backbone, nn.Sequential):
+                         # Get the last main block/stage (e.g., the block indexed '15' or similar)
+                         last_block_index_mobilenet = len(model.backbone) - 1
+                         last_block = model.backbone[last_block_index_mobilenet]
+                         # Get the last layer *within* that last block
+                         # Check if last_block is also sequential or directly the layer
+                         if isinstance(last_block, nn.Sequential) and len(last_block) > 0:
+                             last_layer_index_mobilenet = len(last_block) - 1
+                             target_layer = last_block[last_layer_index_mobilenet]
+                         elif isinstance(last_block, nn.Module): # Maybe the block itself is the layer
+                             target_layer = last_block
+                         else:
+                             raise TypeError("Unexpected structure in last block of MobileNetV3 backbone.")
+                         # You might need to go deeper, e.g., target_layer = last_block[...].conv
+                    else:
+                         raise AttributeError("Model structure doesn't match expected MobileNetV3 backbone.")
 
                 # Check if layer was found for compatible models
                 mask2former_models = ['mask2former_model_small', 'mask2former_model_large'] # M2F incompatible check later
